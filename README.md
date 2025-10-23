@@ -4,6 +4,7 @@ This repository contains comprehensive reference documentation for GitHub Copilo
 
 ## 📚 Documentation
 
+- **[Documentation Index](./INDEX.md)** - Complete guide to navigating all documentation
 - **[Quick Start Guide](./QUICK_START.md)** - Get started with Copilot Chat in 5 minutes
 - **[Complete Reference](./COPILOT_CHAT_REFERENCE.md)** - Comprehensive guide to all Copilot Chat features
 - **[Practical Examples](./EXAMPLES.md)** - Real-world examples and use cases
