@@ -1,0 +1,5461 @@
+---
+1
+---
+It looks like you want to “backwards engineer processes and repps.” I’m interpreting that as possibly:
+
+1. Reverse engineer (backward-engineer) existing processes (business, operational, engineering workflows).
+2. Reverse engineer “repos” (code repositories) to understand architecture, responsibilities, data flows, or undocumented behavior.
+
+Because the phrase is ambiguous, let me outline approaches for each, and then you can clarify what you actually need.
+
+---
+
+## Option A: Reverse Engineering Business / Operational Processes
+
+Goal: Start from current outputs/results and infer the underlying workflow, decision points, roles, tools, and hidden rules.
+
+Suggested Framework:
+1. Define the Observable Outputs  
+   - Reports, product features, SLAs, customer outcomes, deployment cadence.  
+2. Inventory Inputs & Triggers  
+   - Requests, tickets, external events, cron jobs, data feeds.  
+3. Trace Artifacts  
+   - Documents, dashboards, code commits, tickets, approvals, runbooks.  
+4. Map Actors & Systems  
+   - Human roles vs. automated systems (CI/CD, ETL, monitoring, LLM pipelines).  
+5. Identify Transformation Stages  
+   - What changes between each artifact? (Idea → Spec → Code → Build → Deploy → Monitor).  
+6. Extract Decision Logic  
+   - Formal (checklists) vs. tacit (tribal knowledge).  
+7. Detect Bottlenecks & Single Points of Failure  
+   - Queues, manual approvals, handoffs without ownership.  
+8. Validate with Stakeholders  
+   - Present inferred model; ask “What’s inaccurate or missing?”  
+9. Formalize  
+   - BPMN diagrams, sequence diagrams, RACI, SOPs.  
+10. Optimize (only after accurate modeling)  
+   - Automate, consolidate tools, reduce WIP, add observability.
+
+Key Artifacts to Collect:
+- Ticket histories (Jira, Linear, GitHub Issues)
+- Git commit timelines / PR metadata
+- Deployment logs
+- Incident postmortems
+- Runbooks / Slack decision threads
+
+Metrics to Derive:
+- Lead time (request to production)
+- Change failure rate
+- Rework ratio (% reopened items)
+- Approval latency
+- Flow efficiency (active time / total elapsed time)
+
+---
+
+## Option B: Reverse Engineering Code Repositories
+
+Goal: Understand architecture, ownership, responsibilities, and implicit contracts when documentation is lacking.
+
+Structured Procedure:
+1. High-Level Scan  
+   - Top-level directories: infer bounded contexts or layers (api/, core/, infra/, scripts/, adapters/).  
+2. Dependency Graph  
+   - Use tools (e.g., `depcruise`, `go mod graph`, `pipdeptree`, `mvn dependency:tree`) to map module coupling.  
+3. Entry Points  
+   - Look for main files, server initializers, CLI binaries, workflow orchestrators.  
+4. Data Model Discovery  
+   - ORM models, schema definitions (Prisma, Alembic, migrations), `proto` / `graphql` / `openapi` definitions.  
+5. Cross-Service Interfaces  
+   - HTTP clients, message queues, event topics, gRPC stubs.  
+6. Behavioral Hotspots  
+   - Files with high churn (git log --name-only --since=3.months).  
+   - Functions with many call sites (ctags / tree-sitter / language server).  
+7. Configuration & Secrets  
+   - `.env.example`, config loaders, feature flag systems.  
+8. Observability Hooks  
+   - Logging patterns, tracing spans, metrics emission.  
+9. Security / Guardrails  
+   - Auth middlewares, permission checks, input validators.  
+10. Build & Deployment  
+   - CI workflows (GitHub Actions, Jenkinsfiles), container specs, IaC (Terraform, CDK).  
+
+Deliverables You Can Produce:
+- Architecture diagram (layered + runtime interaction)
+- Ownership map (directories ↔ teams)
+- Risk register (modules: outdated libs, no tests, tight coupling)
+- Data flow narrative (request lifecycle)
+- Tech debt catalog (implicit contracts, duplicated logic, leaky abstractions)
+
+Automation Ideas:
+- Script to rank files by (churn * cyclomatic complexity)
+- Generate call graph for critical services
+- Detect circular dependencies
+- LLM-assisted doc generation for top 10 most-imported modules
+
+---
+
+## Bridging Both: Process + Repo Integration
+
+If your aim is to connect human process to code reality:
+- Correlate PR merge timestamps with deployment logs to measure batch size.
+- Map incidents to root-cause modules to see fragile hotspots.
+- Derive “actual” vs. “declared” ownership (who edits vs. who is listed as codeowner).
+- Track idea → ticket → PR → release → impact metric.
+
+---
+
+## Clarification Needed
+
+Please tell me which of these (or something else) you meant:
+
+A. Reverse engineer business or operational processes  
+B. Reverse engineer code repositories  
+C. Both: create an integrated operational + technical map  
+D. Something different (please describe)  
+
+Also helpful to know:
+- Size of the org / team?
+- Languages / stack?
+- Desired output (docs, diagrams, automation scripts, audit report)?
+- Time constraints?
+
+Reply with your choice (A/B/C/D) and any context, and I’ll tailor a concrete, step-by-step plan (including tool suggestions and sample commands). If you already have a specific repo or process in mind, share that and I can go deeper.
+
+How would you like to proceed?
+---
+2
+---
+Below is a comprehensive, battle-tested playbook for Option B: Reverse Engineering a Code Repository (or a constellation of repos). You can apply it whether you’ve inherited a monolith, a services cluster, or a polyglot platform. Skim the headings first; dive where needed. If you give me stack details later (language(s), size, goals), I can tailor scripts and tooling more precisely.
+
+---
+
+## 1. Define Why You’re Reverse Engineering (Anchor Objectives)
+Without a purpose, you’ll drown in data.
+
+Common objectives:
+- Architecture map (current—not aspirational)
+- Onboarding acceleration
+- Risk & fragility assessment
+- Data flow / PII handling analysis
+- Extraction for modularization or service splitting
+- Security / compliance audit
+- Performance bottleneck localization
+Pick 2–3 primary goals and let them drive scope (e.g., skip UI layer if focus = data lineage).
+
+Deliverable framing template:
+Goal → Questions → Evidence Needed → Extraction Method  
+Example: Reduce deployment risk → Where are high-churn high-complexity hotspots? → Git churn + code complexity metrics → Git log + static analysis.
+
+---
+
+## 2. Repository Recon (30–60 min Quick Scan)
+Checklist:
+- Languages / frameworks (e.g., `cloc .`)
+- Build system(s) (Makefile, Gradle, Yarn, Go modules, Cargo)
+- Packaging / distribution (Dockerfiles, Helm charts, PyPI, internal registries)
+- Environment separation (config patterns, `config/`, `.env.*`, feature flags)
+- Test posture (coverage files, test directories, integration harnesses)
+- Observability hints (tracing libs, logging wrappers)
+- Security baseline (Dependabot config, SAST tooling, secret scanners)
+
+Commands:
+```
+cloc . --by-file --json > cloc.json
+git log --since=90.days --pretty=format:"%h|%an|%ad" --name-only > git_activity_raw.txt
+grep -R "TODO" -n | head -50
+```
+
+---
+
+## 3. Directory & Layer Inference
+Heuristic mapping:
+- api/, rest/, controllers/ → ingress layer
+- domain/, core/, model/ → business logic
+- adapters/, clients/, gateways/ → integration boundaries
+- infra/, ops/, deploy/, terraform/, cdk/ → platform provisioning
+- scripts/, tools/ → operational utilities
+- migrations/, schema/ → data evolution
+- proto/, graphql/, openapi/ → contract surfaces
+
+Action:
+Create a table: Directory | Inferred Responsibility | Confidence | Notes (anomalies).
+
+---
+
+## 4. Dependency & Coupling Graph
+Goal: Identify cores vs. leaves vs. tangles.
+
+Language-specific tools:
+- JavaScript/TS: dependency-cruiser + madge
+- Python: `pipdeptree`, `snakefood`, `grimp`
+- Go: `go mod graph`, `godepgraph`
+- Java/Kotlin: `mvn dependency:tree` / Gradle `dependencies`
+- Rust: `cargo tree`
+- Polyglot: CodeQL import graph; Sourcegraph; Semgrep custom rules.
+
+Sample (TypeScript):
+```
+npx depcruise --include-only "^src" --output-type dot src | dot -Tpng -o dep-graph.png
+```
+Flag circulars:
+```
+npx madge --circular --extensions ts,tsx src/
+```
+
+Classify modules:
+- Core (high afferent, low efferent)
+- Infrastructure (low afferent, medium efferent)
+- Tangles (mutual cycles)
+- Orphans (no references; possible dead code or plugin entry points)
+
+---
+
+## 5. Entry Points & Execution Surfaces
+Identify:
+- Binaries / main functions
+- HTTP server bootstrap
+- CLI commands
+- Event consumers (Kafka topics, SQS queues)
+- Cron / schedulers
+- Lambda / serverless handlers
+
+Commands:
+```
+grep -R "listen(" -n src/
+grep -R "schedule" -n
+git grep -E "(Consume|Subscribe|Handle|OnMessage)"
+```
+
+Deliverable: Surface Matrix (Surface | File | Trigger | Downstream Effects).
+
+---
+
+## 6. Data Model & Persistence Layer
+Artifacts:
+- ORM models (Sequelize, TypeORM, Django ORM, ActiveRecord, Prisma)
+- Migration histories
+- Database access wrappers
+- Serialization schemas (Avro, Protobuf, JSON Schemas)
+- Caches (Redis key patterns)
+- External API shapes (OpenAPI, GraphQL SDL)
+
+Actions:
+1. Extract schema evolution timeline: order migrations by timestamp; cluster breaking vs additive changes.
+2. Identify PII fields & propagation (names, emails, tokens).
+3. Map entity CRUD paths: which services/functions mutate which tables/collections.
+
+Example (PostgreSQL introspection):
+```
+psql -c "\dt" > tables.txt
+psql -c "\d+ users" > users_table.txt
+```
+
+Output: Entity Relationship Diagram (use `schemacrawler`, `dbdiagram.io`, `prisma format` if Prisma schema exists).
+
+---
+
+## 7. Runtime & Behavior Profiling (Optional but High Value)
+If you can run the system:
+- Enable tracing (OpenTelemetry), collect a few representative traces.
+- Capture hot endpoints with sampling profiler (e.g., `py-spy`, `perf`, `go tool pprof`).
+- Log classification: structure vs freeform; presence of correlation IDs.
+
+Minimal trace harvest (if Node.js + OpenTelemetry already partly configured): run a small load and export traces to `otel-collector` → `jaeger` → snapshot.
+
+---
+
+## 8. Churn, Complexity & Risk Hotspots
+Formula: Risk ≈ (Recent Churn) * (Structural Complexity) * (Low Test Coverage Flag)
+
+Steps:
+1. Churn (90 days):
+```
+git log --since=90.days --name-only --pretty=format: | sort | grep -v '^$' | uniq -c | sort -nr > churn.txt
+```
+2. Complexity (language-specific):
+- JS/TS: `npx plato -r -d report/ src`
+- Python: `radon cc -s -a src/ > complexity.txt`
+- Go: `gocyclo -over 15 ./...`
+3. Merge with a script (Python example merging churn + complexity keyed by filepath).
+4. Rank Top 20.
+
+Deliverable: Hotspot Table (File | Churn | CC Score | Est. Risk Class | Notes).
+
+---
+
+## 9. Interface & Contract Mapping
+List public-facing contracts:
+- REST endpoints (scan routers: `router.get`, `app.post`)
+- GraphQL schema (SDL file)
+- gRPC service definitions (`service X { ... }`)
+- Events (topic names + payload schema)
+- Feature flags gating behavior (flag inventory)
+
+Command examples:
+```
+git grep -E "router\.(get|post|put|delete)"
+git grep -E "(publish|emit)\("
+git grep -E "(FeatureFlag|flagClient\.isEnabled)"
+```
+
+Output: Contract Catalog (Type | Identifier | Schema Source | Consumers | Stability).
+
+---
+
+## 10. Security & Compliance Pass
+Check:
+- Auth layers (middleware chaining order)
+- Authorization (policy objects, RBAC maps)
+- Input validation (schema validation libraries)
+- Secret handling (env var names patterns: KEY, SECRET, TOKEN)
+- Dependency vulnerabilities (SCA tool: `npm audit`, `pip-audit`, `trivy fs .`)
+- Insecure patterns (TODO logs referencing “temp fix” around auth)
+
+Quick scans:
+```
+git grep -i "secret"
+git grep -i "jwt"
+trivy fs --severity HIGH,CRITICAL .
+```
+
+Deliverable: Security Finding Sheet (Severity | Vector | Evidence | Suggested Remediation | Owner Guess).
+
+---
+
+## 11. Observability & Reliability
+Inventory:
+- Metrics (Prometheus exposition? e.g., `Histogram`, `Counter`)
+- Logs: structured (JSON?) vs ad hoc; presence of correlation IDs
+- Tracing spans (# of spans per request depth)
+- Error handling (central error boundary?)
+- Retries / circuit breakers (libraries like Hystrix, resilience4j, Polly)
+
+Score each dimension (0–3):
+- Metrics Coverage
+- Trace Depth
+- Log Structure Quality
+- Error Taxonomy
+- SLO Awareness (any docs?)
+
+---
+
+## 12. Ownership Reality vs. Metadata
+Compare:
+- CODEOWNERS file (if exists)
+- Actual commit activity per directory:
+```
+git log --since=90.days --numstat --format="%ae" | awk 'NF==3 {sum[$3]+=$1+$2} NF==1 {author=$1} END{for (f in sum) print sum[f], f}' | sort -nr | head
+```
+Look for drift (e.g., one engineer silently owning legacy core).
+
+---
+
+## 13. Dead Code & Redundancy
+Strategies:
+- Unreferenced modules (build a call/import graph → mark leaves with no inbound edges except tests)
+- Feature flags permanently ON but code still branching
+- APIs with no inbound references (search codebase + infra config)
+- Duplicate util patterns (e.g., multiple date formatting helpers)
+
+Tools:
+- TS/JS: ts-prune
+- Python: vulture
+- Go: `go vet` (limited) plus custom static grep.
+
+---
+
+## 14. Knowledge Extraction via Automated Summaries
+Leverage LLM + scripted extraction:
+1. Chunk files (semantic boundaries; max token window).
+2. For each significant file (e.g., top 100 by churn or import frequency), generate:
+   - Purpose
+   - Key functions/classes
+   - External dependencies
+   - Potential risks
+3. Aggregate into a Developer Guide draft.
+
+(If you want, I can draft a prompt template later.)
+
+---
+
+## 15. Synthesis Deliverables (Recommended Bundle)
+1. Executive Overview (1 page):
+   - Purpose, Scope, Key Risks, Suggested Priority Actions.
+2. Architecture Diagram (static + interaction sequence).
+3. Module Responsibility Matrix.
+4. Hotspot & Risk Report.
+5. Data Flow & PII Handling Map.
+6. Contract Catalog (APIs/events).
+7. Security & Observability Snapshot.
+8. Ownership & Contribution Drift Table.
+9. Tech Debt / Refactor Backlog (ranked).
+10. Appendix: Methodology & Commands.
+
+---
+
+## 16. Prioritized Remediation Backlog (Template Categories)
+Rank by (Impact * Probability * Urgency):
+- Critical Coupling Break (Extract X from Y)
+- Observability Gap (Add tracing to core request path)
+- Security Fix (Missing authorization in Z)
+- Data Integrity (Unvalidated input on ingestion route)
+- Performance (N+1 queries in high-traffic endpoint)
+- Dead Code Purge (Remove legacy config loader)
+
+Backlog Item Format:
+Title | Category | Benefit | Effort (S/M/L) | Dependencies | Suggested Owner.
+
+---
+
+## 17. Suggested Timeline (Adjust Scale)
+Day 1–2: Recon + Dependency + Entry Points  
+Day 3–4: Data model + Contracts + Churn/Complexity  
+Day 5: Security / Observability / Ownership  
+Day 6: Synthesis + Diagrams + Draft Backlog  
+Day 7: Review with stakeholders → refine risk/priorities.
+
+---
+
+## 18. Automation Skeleton (Example Python Merger for Churn + Cyclomatic)
+```python
+import json, subprocess, re, pathlib
+from collections import defaultdict
+
+# 1. Churn
+churn_counts = defaultdict(int)
+log = subprocess.check_output(
+    ["bash","-lc","git log --since=90.days --name-only --pretty=format:"]).decode()
+for line in log.splitlines():
+    if line.strip() and "/" in line and not line.startswith(" "):
+        churn_counts[line]+=1
+
+# 2. Complexity (example radon JSON)
+radon_raw = subprocess.check_output(["bash","-lc","radon cc -j -s src/"]).decode()
+complexity = json.loads(radon_raw)
+
+results = []
+for file, blocks in complexity.items():
+    avg_cc = sum(b["complexity"] for b in blocks)/len(blocks) if blocks else 0
+    results.append({
+        "file": file,
+        "churn": churn_counts.get(file,0),
+        "avg_cyclomatic": round(avg_cc,2),
+        "risk_score": churn_counts.get(file,0) * avg_cc
+    })
+
+results.sort(key=lambda x: x["risk_score"], reverse=True)
+for r in results[:25]:
+    print(r)
+```
+
+---
+
+## 19. Red Flags to Watch For
+- God modules (5000+ lines, high churn)
+- Silent side effects (functions performing network I/O unexpectedly)
+- Inconsistent error models (mixed exceptions vs return codes)
+- Ad hoc retry loops without backoff
+- Hard-coded credentials / tokens
+- Feature flags with TODO: remove after Q2 (years old)
+- Incomplete migrations (migration file present; table absent)
+- Multiple JSON schema versions coexisting without migration logic
+
+---
+
+## 20. Ask Me for Tailoring
+If you provide:
+- Primary language(s)
+- Monorepo vs multi-repo
+- CI/CD platform
+- Cloud provider / infra style
+- Goal emphasis (e.g., security vs modularization)
+
+…I can refine:
+- Exact toolchain choices
+- Script pack
+- Recommended diagram types
+- Risk scoring formula tuning.
+
+---
+
+## Quick Start Minimal Path (If You Need a Fast Win)
+1. Run churn + complexity → produce Top 20 hotspot list.
+2. Extract contracts (API + events) → verify with team.
+3. Draw high-level system architecture (ingress → core → data stores → external).
+4. Security sweep for auth boundaries + secrets.
+5. Draft remediation backlog.
+
+This alone often delivers >70% of perceived value in <3 days.
+
+---
+
+Let me know your stack or next intended output (e.g., “generate an executive summary,” “produce a backlog,” “focus on security”), and I’ll produce the next layer. What would you like to do next?
+
+---
+3
+---
+
+Below is a focused extension of the reverse‑engineering playbook specifically for closed source (proprietary / internal) codebases. It highlights what materially differs from doing this on public/open-source repos—methodology, risk controls, legal/IP, compliance, and secure automation.
+
+---
+
+## 1. Mindset Shift: Constraints Before Curiosity
+In closed source contexts, reverse engineering is rarely just “understand architecture”—it is also:
+- Reducing key‑person risk
+- Enabling audits (SOX, PCI DSS, HIPAA, ISO 27001)
+- Supporting due diligence (M&A, divestiture, vendor negotiation)
+- Enforcing IP stewardship (ensure no license contamination)
+- Building a defensible change management record (who touched what and why)
+
+Define classification of desired outputs up front (e.g., Internal / Confidential / Restricted) so you don’t overexpose sensitive artifacts later (diagrams, dumps, model summaries).
+
+---
+
+## 2. Legal & IP Boundaries
+Clarify:
+- Ownership: Are ALL components legitimately licensed? (Scan vendored code.)
+- Reverse engineering scope: If you’re analyzing third‑party binaries (SaaS agents, SDKs), verify EULA/TOS permits static/dynamic inspection.
+- Export restrictions: Crypto modules might have special classification.
+- Patent review: Flag “novel mechanisms” early so IP counsel can evaluate filing windows.
+
+Tooling:
+- License scanning: FOSSA, FossID, Black Duck, ORT, ScanCode.
+- Policy gating: CI pipeline fails on GPL‑incompatible modules in proprietary core.
+
+Deliverable Add‑On: License Risk Matrix (Component | License | Usage Mode | Risk | Action).
+
+---
+
+## 3. Access Control & Least Privilege
+Principle: “Read” access ≠ carte blanche to replicate.
+- Use a dedicated analysis identity (service account) with read-only permissions.
+- Produce signed audit trail: date, repository commit SHAs, tools executed, resulting artifact hashes.
+- Store generated diagrams / derivative datasets in a restricted doc repository (or artifact registry) with retention policies.
+
+Checklist:
+- Enable branch protection & CODEOWNERS still—even for reverse engineering tasks—to avoid accidental writes.
+- All derived datasets (metrics JSON, dependency graphs) must be tagged with source commit SHA + generation timestamp.
+
+---
+
+## 4. Secure Environment & Data Egress Controls
+If using AI / LLM assistance:
+- Prefer fully self-hosted or approved vendor under DPA; NO raw proprietary code to public endpoints.
+- Implement a “content guard” layer: rejects prompts containing secret-like patterns before they reach a model.
+- Enforce “derive vs exfiltration”: Summaries should not verbatim reproduce large code blocks unless justified (e.g., for a security finding).
+
+Pattern:
+Air‑gapped Analyzer Container:
+1. Mount repos read-only.
+2. Run scanners (complexity, churn, OSS licenses, secret scan).
+3. Export non-sensitive aggregates (metrics, dependency graph) to documentation space.
+
+---
+
+## 5. Data Classification & Redaction
+Sensitive classes in code:
+- Embedded credentials
+- Customer-specific business logic (pricing algorithms)
+- Proprietary ML feature engineering
+- PII sample fixtures in test data
+
+Automated redaction pass before externalizing:
+- Secret scan: TruffleHog, Gitleaks.
+- PII heuristics on test fixtures (emails, phone regex).
+- Mark any file containing regulated patterns (e.g., `card_number`, `ssn`) for restricted summary mode (only structural description, no literal lines).
+
+---
+
+## 6. Handling Multi-Repo Private Architectures
+Create a Service Inventory:
+- Service Name
+- Repo URL
+- Owning Team
+- Deploy Target (cluster/region)
+- Inbound Interfaces (HTTP/gRPC/event topics)
+- Outbound Dependencies (datastores, 3rd-party APIs)
+- Criticality Tier (e.g., Tier 0 = Revenue Path)
+
+Automate:
+- Parse CI/CD manifests (GitHub Actions, Jenkinsfile) for deployment targets.
+- Parse Infra-as-Code (Terraform/Helm) to map infra resources → services.
+- Build cross-repo dependency edges from internal package registries (e.g., internal NPM scope, Go private modules, internal PyPI index).
+
+---
+
+## 7. Commit & Ticket Archaeology (When Docs Are Sparse)
+Correlate:
+- Git commits ↔ Ticket IDs (regex extract `ABC-\d+`)
+- Ticket states ↔ Release tags to build change timelines
+- Slack/Chat exports (if allowed) to infer rationale (apply NLP classification—keep internal only)
+
+Outcome: “Decision Ledger” (Key Architecture Decision | First Observed Commit | Related Ticket | Rationale Summary | Current Validity Flag).
+
+---
+
+## 8. Security Augmentation (Closed Source Emphasis)
+Go beyond external-scan parity:
+- Internal Threat Model: Catalog trust boundaries (public ingress, internal mesh, data lake, secret vault).
+- Lateral Movement Audit: Identify libraries that perform shell execution or dynamic code loading (JVM reflection, Python `eval`, Node `vm`).
+- Secrets At Rest: Inspect config loaders for fallback paths (e.g., reading plain JSON when vault lookup fails).
+- Build Integrity: Check hash pinning / checksum verification for downloaded build artifacts.
+
+Add Static + Semantics:
+- CodeQL / Semgrep custom rules for org-specific patterns (e.g., “Must wrap DB calls in audit logging decorator”).
+- SBOM (CycloneDX / SPDX) generation pinned to SHAs.
+
+---
+
+## 9. Compliance & Controls Mapping
+Map code/process evidence to frameworks:
+
+| Control Domain | Evidence Source | Automation Option |
+|----------------|-----------------|-------------------|
+| SOX Change Mgmt | Git + CI logs | Signed release artifact |
+| PCI Data Flow | Data model + ingress path | Taint tracking stub |
+| HIPAA Access Audit | Auth middleware + logs | Log field schema validation |
+| ISO 27001 Asset Inventory | Service registry export | Scheduled inventory job |
+
+Deliverable: “Control Coverage Gap List” (Control | Required Evidence | Current Evidence | Gap | Suggested Implementation).
+
+---
+
+## 10. Runtime Analysis with Privacy Guardrails
+Production observation restrictions:
+- Use sampling with hash-based deterministic sampling to avoid biased logs.
+- Strip payload bodies unless required for schema inference; store only structural hashes for rarely used paths.
+- If replaying traffic in staging, sanitize at ingress (mask tokens, emails).
+
+Tracing Policy:
+- Only export span names / durations externally; internal attributes containing business logic remain classified.
+
+---
+
+## 11. Risk Register (Closed Source Focus Categories)
+Add categories beyond generic technical debt:
+- Knowledge Concentration (single engineer >60% of commits to critical module)
+- License Contamination (unapproved strong copyleft in core code path)
+- Unsupported Runtime (EOL framework version)
+- Compliance Gap (no audit trail for schema migrations)
+- Observability Blind Spot (Tier 0 service with no SLOs)
+- Security Exposure (unbounded deserialization / reflection)
+- Latent IP Asset (novel algorithm undocumented—potential patent)
+
+Risk Record Template:
+ID | Category | Description | Likelihood | Impact | Score | Proposed Mitigation | Owner | Review Date.
+
+---
+
+## 12. Architectural Documentation Hardening
+For private code, every doc artifact should include:
+- Source Commit Hash Range
+- Generation Date
+- Classification Label
+- Responsible Maintainer
+- Regeneration Script Command (ensures reproducibility)
+
+Example Footer:
+Generated from repos: svc-orders@a1f293c, svc-payments@9bd33e2 on 2025-10-02 via script: `./scripts/gen_arch_snapshot.sh` Classification: Confidential (Internal Use Only)
+
+---
+
+## 13. Ongoing Drift Detection
+Set up scheduled (e.g., daily) pipeline:
+1. Regenerate dependency graph & hotspots.
+2. Compare hashed graphs; if diff magnitude > threshold (e.g., +10% new edges in core), open an internal ticket.
+3. Recompute risk metrics and update dashboard (internal Grafana or Backstage plugin).
+4. Flag “orphaned repos” (no commits in 18 months but still deployed).
+
+---
+
+## 14. AI-Assisted Summarization (Safe Pattern)
+Inside secure environment:
+- Chunk code logically (module boundaries).
+- Embed (vectorize) only structural tokens (identifiers, signatures), excluding literals with potential secrets.
+- LLM prompt includes: “Summarize responsibilities; do not reproduce code; highlight risky patterns (reflection, dynamic eval).”
+- Store summary with a fingerprint of source file (SHA256) to detect staleness.
+
+---
+
+## 15. Special Scenario: M&A / Due Diligence
+Rapid triage steps (time-boxed 3–5 days):
+- Generate SBOM + license report.
+- Identify security posture (open CVEs in dependency manifests).
+- IP uniqueness scan (search for company name / proprietary algorithm names present in external repos—potential leakage).
+- Single points of failure (services with 1 maintainer).
+- Undocumented external data processors (calls to 3rd-party APIs not in vendor register).
+
+Output: “Deal Risk Snapshot” (Green/Amber/Red per domain).
+
+---
+
+## 16. Handling Proprietary ML/Models
+If repo includes models:
+- Inventory model artifacts (files >50MB, directories named `models/`, `.pt`, `.onnx`, `.pb`).
+- Track training code vs inference wrappers—document version coupling.
+- Verify reproducibility: presence of environment pinning (conda env, `requirements.lock`, `poetry.lock`).
+- Data lineage: scan for feature extraction pipelines referencing sensitive columns.
+- License risk: confirm pre-trained models’ usage rights (embedding small license summary into SBOM).
+
+---
+
+## 17. Integrating With Internal Developer Portal
+If you have Backstage / similar:
+- Auto-publish component metadata (ownership, lifecycle state).
+- Add “Architecture Drift Score” and “Risk Hotspots” widgets.
+- Link each service’s summary and risk register entry.
+
+---
+
+## 18. Redaction & Distribution Policy
+Before circulating diagrams or summaries:
+- Strip internal credential hostnames.
+- Collapse exact S3/GCS bucket names into classification (e.g., analytics-bucket → analytics-store).
+- Replace sensitive algorithm names with generic placeholders if IP filing pending (e.g., PricingEngineV7 → Pricing Engine Module).
+
+---
+
+## 19. Minimal Closed-Source Adaptation Quick Start (Fast Value Track)
+Day 1: Access approval + run license & secret scans + churn/complexity
+Day 2: Service inventory + dependency graph + auth boundary map
+Day 3: Data model + PII flow + risk hotspots
+Day 4: Security & compliance gap pass + IP uniqueness review
+Day 5: Produce executive brief + remediation backlog + reproducible scripts
+
+---
+
+## 20. Backlog Category Examples (Closed Source)
+- Compliance: Add migration audit ledger (hash + applied timestamp).
+- Security: Centralize secret resolution via vault client wrapper.
+- Observability: Implement SLOs + error budget for top 3 Tier 0 services.
+- IP: Document algorithmic modules; engage counsel for patentability.
+- Reliability: Break circular dependency between billing-core and pricing-adapter.
+- License Hygiene: Replace GPLv3 utility with MIT alternative.
+
+---
+
+## 21. Suggested Additional Automation Scripts (Concepts)
+- `gen_sbom.sh`: Produce SPDX + CycloneDX → store as artifact with hash.
+- `scan_drift.py`: Compare last dependency graph JSON vs current; open ticket if threshold exceeded.
+- `risk_update.py`: Recalculate (churn * complexity * coverage_gap * criticality_factor).
+- `ownership_diff.py`: Alert when top editor for Tier 0 service leaves CODEOWNERS.
+
+(If you want, I can draft these scripts in file blocks next.)
+
+---
+
+## 22. Common Pitfalls (Closed Source Context)
+- Over-sharing: Internal wiki replicates sensitive code blocks verbatim; increases breach impact surface.
+- Unreviewed AI generation: Introduces license-incompatible snippets via ungoverned code suggestions.
+- Shadow services: Deployed but not in registry; missed in threat modeling.
+- Static secrets committed historically but never rotated after discovery.
+- Misleading architecture diagrams (aspirational, not commit-derived) accepted by auditors.
+
+---
+
+## 23. Tailor Next Steps
+If you tell me:
+- Programming languages / frameworks
+- Size (# repos / # services)
+- Compliance regimes (e.g., PCI, SOX)
+- Priority (security vs modularization vs onboarding)
+- Whether you can run code or only static read
+
+…I can generate:
+- Customized script pack
+- Risk scoring formula tuned to your environment
+- Template for executive briefing
+- Example Backlog YAML
+- Secure AI prompt templates
+
+---
+
+Let me know what you’d like next:
+A. Provide scripts (pick area: SBOM, drift, hotspot merge)  
+B. Generate an executive summary template  
+C. Create a remediation backlog scaffold  
+D. Draft AI-safe summarization prompt templates  
+E. Something else (describe)
+
+Which direction should we take?
+
+---
+4
+---
+
+Below are the complete deliverables for A, B, C, and D.
+
+Contents:
+1. Scripts (SBOM, drift detection, hotspot merge, ownership diff, risk update) + supporting config + README
+2. Executive summary template (Markdown)
+3. Remediation backlog scaffold (YAML)
+4. AI-safe summarization prompt templates (Markdown)
+
+Feel free to request language/stack-specific variants afterward.
+
+```bash name=scripts/gen_sbom.sh
+#!/usr/bin/env bash
+#
+# gen_sbom.sh
+#
+# Generates SBOMs (CycloneDX + SPDX) for multiple ecosystems and consolidates them.
+# Safe for closed-source environments: outputs only dependency metadata, not source code.
+#
+# Requirements (install in CI environment):
+#   - syft (anchore) OR cyclonedx-cli
+#   - pipdeptree (for Python)
+#   - npm (for Node)
+#   - go (for Go modules)
+#   - jq
+#
+# Usage:
+#   ./scripts/gen_sbom.sh --out artifacts/sbom --ref "$(git rev-parse HEAD)"
+#   (Run from repo root)
+#
+set -euo pipefail
+
+OUT_DIR="artifacts/sbom"
+REF=""
+FORMAT_ALL="true"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) OUT_DIR="$2"; shift 2;;
+    --ref) REF="$2"; shift 2;;
+    --no-all) FORMAT_ALL="false"; shift;;
+    *) echo "Unknown arg: $1" >&2; exit 1;;
+  esac
+done
+
+mkdir -p "$OUT_DIR/tmp"
+
+if [[ -z "$REF" ]]; then
+  REF="$(git rev-parse HEAD)"
+fi
+
+echo "[SBOM] Generating at ref $REF"
+
+timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+# Detect ecosystems
+has_node=false
+has_python=false
+has_go=false
+has_java=false
+has_rust=false
+
+[[ -f package.json ]] && has_node=true
+[[ -f requirements.txt || -f pyproject.toml ]] && has_python=true
+[[ -f go.mod ]] && has_go=true
+ls *.gradle 2>/dev/null 1>&2 || ls pom.xml 2>/dev/null 1>&2 && has_java=true
+[[ -f Cargo.toml ]] && has_rust=true
+
+manifest_summary="$OUT_DIR/manifest_summary.json"
+echo '{"ecosystems":[]}' > "$manifest_summary"
+
+append_manifest () {
+  jq --arg e "$1" '.ecosystems += [$e]' "$manifest_summary" > "$manifest_summary.tmp" && mv "$manifest_summary.tmp" "$manifest_summary"
+}
+
+# Node (CycloneDX)
+if $has_node; then
+  echo "[SBOM][Node] Installing prod deps (no scripts)..."
+  npm ci --ignore-scripts --no-audit --fund=false
+  if command -v npx >/dev/null; then
+    echo "[SBOM][Node] Generating CycloneDX JSON..."
+    npx --yes @cyclonedx/cyclonedx-npm --output-format json --output-file "$OUT_DIR/tmp/node.cdx.json" || echo "[WARN] CycloneDX NPM generation failed"
+  fi
+  append_manifest "node"
+fi
+
+# Python
+if $has_python; then
+  echo "[SBOM][Python] Building dependency list..."
+  PYENV_DIR=".venv-sbom"
+  python3 -m venv "$PYENV_DIR"
+  source "$PYENV_DIR/bin/activate"
+  if [[ -f requirements.txt ]]; then
+    pip install -q -r requirements.txt
+  elif [[ -f pyproject.toml ]]; then
+    pip install -q build pip-tools >/dev/null 2>&1 || true
+    pip install -q . >/dev/null 2>&1 || true
+  fi
+  pip install -q pipdeptree cyclonedx-bom >/dev/null 2>&1 || true
+  pipdeptree --json-tree > "$OUT_DIR/tmp/python.dep.json" || true
+  cyclonedx-py -o "$OUT_DIR/tmp/python.cdx.json" || true
+  deactivate
+  append_manifest "python"
+fi
+
+# Go
+if $has_go; then
+  echo "[SBOM][Go] Generating go list..."
+  go list -deps -json ./... > "$OUT_DIR/tmp/go.deps.json" 2>/dev/null || true
+  if command -v syft >/dev/null; then
+     syft dir:. -o cyclonedx-json > "$OUT_DIR/tmp/go.cdx.json" || true
+  fi
+  append_manifest "go"
+fi
+
+# Java (best-effort)
+if $has_java; then
+  echo "[SBOM][Java] Attempting mvn dependency:tree (if Maven)..."
+  if [[ -f pom.xml ]]; then
+    mvn -q dependency:tree -DoutputFile="$OUT_DIR/tmp/maven.tree.txt" || true
+  fi
+  append_manifest "java"
+fi
+
+# Rust
+if $has_rust; then
+  echo "[SBOM][Rust] cargo metadata..."
+  cargo metadata --format-version 1 > "$OUT_DIR/tmp/rust.metadata.json" 2>/dev/null || true
+  if command -v syft >/dev/null; then
+     syft dir:. -o cyclonedx-json > "$OUT_DIR/tmp/rust.cdx.json" || true
+  fi
+  append_manifest "rust"
+fi
+
+# Consolidation (naive merge of CycloneDX components if present)
+combined="$OUT_DIR/sbom_combined.cyclonedx.json"
+if ls "$OUT_DIR"/tmp/*.cdx.json >/dev/null 2>&1; then
+  echo "[SBOM] Combining CycloneDX component lists..."
+  # Simple merge: accumulate components arrays uniquely by name+version
+  jq -s '
+    reduce .[] as $doc (
+      {bomFormat:"CycloneDX", specVersion:"1.5", serialNumber:"urn:uuid:'"$(uuidgen 2>/dev/null || echo temp-uuid)"'", version:1, components:[]};
+      .components += ($doc.components // [])
+    )
+    | (.components |= (unique_by(.name + ":" + (.version // ""))))
+    | .metadata |= {timestamp:"'"$timestamp"'", tools:[{name:"gen_sbom.sh"}], properties:[{name:"git.ref","value":"'"$REF"'"}]}
+  ' "$OUT_DIR"/tmp/*.cdx.json > "$combined" 2>/dev/null || echo '{}' > "$combined"
+else
+  echo "[WARN] No CycloneDX fragments found; combined file minimal."
+  echo '{}' > "$combined"
+fi
+
+# SPDX (if syft available)
+if command -v syft >/dev/null; then
+  echo "[SBOM] Generating SPDX JSON (syft)..."
+  syft dir:. -o spdx-json > "$OUT_DIR/sbom.spdx.json" || echo '{}' > "$OUT_DIR/sbom.spdx.json"
+fi
+
+cp "$manifest_summary" "$OUT_DIR/manifest_summary.$REF.json"
+
+echo "[SBOM] Done. Outputs in $OUT_DIR
+- Combined CycloneDX: $combined
+- SPDX (if generated): $OUT_DIR/sbom.spdx.json
+- Manifest summary: $OUT_DIR/manifest_summary.$REF.json"
+```
+
+```python name=scripts/scan_drift.py
+#!/usr/bin/env python3
+"""
+scan_drift.py
+
+Compares the current dependency graph / service inventory against a prior snapshot
+to detect architecture drift.
+
+Inputs:
+  --current current_graph.json
+  --previous previous_graph.json
+  --threshold 0.1 (fractional % new edges triggering alert)
+  --out drift_report.json
+  --mode (deps|services) default: deps
+
+Expected schema (deps mode):
+{
+  "nodes":[{"id":"moduleA","group":"serviceX"}, ...],
+  "edges":[{"from":"moduleA","to":"moduleB","type":"import"}, ...],
+  "meta":{"ref":"<git-sha>","generated_at":"..."}
+}
+
+A lightweight JSON is fine; generate current_graph.json via another internal tool.
+
+For services mode, nodes=services, edges=call relationships or event flows.
+
+Drift Heuristics:
+  - Added nodes
+  - Removed nodes
+  - Added edges
+  - Removed edges
+  - Edge churn ratio: (#added + #removed) / previous_edge_count
+  - Core boundary violation: new edge where target previously had in_degree=0 (potential boundary breach)
+
+Outputs JSON:
+{
+  "summary": {...},
+  "added_nodes": [...],
+  "removed_nodes": [...],
+  "added_edges": [...],
+  "removed_edges": [...],
+  "core_boundary_flags": [...]
+}
+
+Exit code:
+  0 if below threshold
+  2 if drift >= threshold (trigger pipeline action)
+
+"""
+import json, argparse, sys, hashlib
+from collections import defaultdict
+
+def load(path):
+    with open(path) as f:
+        return json.load(f)
+
+def edge_key(e):
+    return (e["from"], e["to"], e.get("type",""))
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--current", required=True)
+    ap.add_argument("--previous", required=True)
+    ap.add_argument("--threshold", type=float, default=0.1)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--mode", choices=["deps","services"], default="deps")
+    args = ap.parse_args()
+
+    cur = load(args.current)
+    prev = load(args.previous)
+
+    prev_nodes = {n["id"]: n for n in prev.get("nodes", [])}
+    cur_nodes = {n["id"]: n for n in cur.get("nodes", [])}
+
+    added_nodes = sorted(set(cur_nodes) - set(prev_nodes))
+    removed_nodes = sorted(set(prev_nodes) - set(cur_nodes))
+
+    prev_edges_set = set(edge_key(e) for e in prev.get("edges", []))
+    cur_edges_set = set(edge_key(e) for e in cur.get("edges", []))
+
+    added_edges_raw = cur_edges_set - prev_edges_set
+    removed_edges_raw = prev_edges_set - cur_edges_set
+
+    added_edges = [ {"from":f,"to":t,"type":typ} for (f,t,typ) in added_edges_raw ]
+    removed_edges = [ {"from":f,"to":t,"type":typ} for (f,t,typ) in removed_edges_raw ]
+
+    prev_edge_count = len(prev_edges_set) or 1
+    churn_ratio = (len(added_edges_raw)+len(removed_edges_raw))/prev_edge_count
+
+    # Degree calculations on previous graph
+    in_deg_prev = defaultdict(int)
+    for f,t,typ in prev_edges_set:
+        in_deg_prev[t]+=1
+
+    core_boundary_flags = []
+    for e in added_edges:
+        target = e["to"]
+        if in_deg_prev.get(target,0)==0 and target in prev_nodes:
+            core_boundary_flags.append(e)
+
+    summary = {
+        "previous_ref": prev.get("meta",{}).get("ref"),
+        "current_ref": cur.get("meta",{}).get("ref"),
+        "added_nodes_count": len(added_nodes),
+        "removed_nodes_count": len(removed_nodes),
+        "added_edges_count": len(added_edges),
+        "removed_edges_count": len(removed_edges),
+        "churn_ratio": round(churn_ratio,4),
+        "threshold": args.threshold,
+        "breach": churn_ratio >= args.threshold
+    }
+
+    report = {
+        "summary": summary,
+        "added_nodes": added_nodes,
+        "removed_nodes": removed_nodes,
+        "added_edges": added_edges,
+        "removed_edges": removed_edges,
+        "core_boundary_flags": core_boundary_flags,
+        "hash": hashlib.sha256(json.dumps(summary, sort_keys=True).encode()).hexdigest()
+    }
+
+    with open(args.out,"w") as f:
+        json.dump(report,f,indent=2)
+
+    print(json.dumps(summary, indent=2))
+    if summary["breach"]:
+        print("[DRIFT] Threshold exceeded.", file=sys.stderr)
+        sys.exit(2)
+
+if __name__ == "__main__":
+    main()
+```
+
+```python name=scripts/hotspot_merge.py
+#!/usr/bin/env python3
+"""
+hotspot_merge.py
+
+Merges churn, complexity, (optional) coverage, and criticality metadata into a ranked hotspot report.
+
+Inputs:
+  --churn churn.txt (format: "<count> <filepath>")
+  --complexity complexity.json (Radon JSON, Plato summary, or custom: see adapter)
+  --coverage coverage.json (optional: { "files": { "path": coverage_pct_float } })
+  --criticality criticality.yaml (optional: YAML mapping file->criticality score 1-5)
+  --out hotspots.json
+  --top 50
+
+Risk score formula (default):
+  risk = (normalized_churn * 0.4 + normalized_complexity * 0.4 + coverage_penalty * 0.1 + criticality_factor * 0.1)
+Where:
+  normalized_churn = churn / max_churn
+  normalized_complexity = file_avg_cc / max_cc
+  coverage_penalty = (1 - coverage) (coverage in 0..1; if missing assume 0.5)
+  criticality_factor = criticality / max_criticality (default criticality=1)
+
+Override with env vars:
+  RISK_W_CHURN, RISK_W_COMPLEXITY, RISK_W_COVERAGE, RISK_W_CRITICALITY
+"""
+import argparse, json, sys, os, math
+from collections import defaultdict
+
+try:
+    import yaml
+except:
+    yaml = None
+
+def load_churn(path):
+    churn = {}
+    with open(path) as f:
+        for line in f:
+            line=line.strip()
+            if not line: continue
+            parts=line.split()
+            if len(parts) < 2: continue
+            count=int(parts[0])
+            file=parts[1]
+            churn[file]=count
+    return churn
+
+def load_complexity(path):
+    """
+    Expect radon cc -j output OR a dict { "path": [{"complexity":int}, ...] }.
+    Returns mapping file->avg complexity.
+    """
+    with open(path) as f:
+        data=json.load(f)
+    result={}
+    for file, blocks in data.items():
+        if not isinstance(blocks,list):
+            continue
+        if not blocks:
+            avg=0
+        else:
+            avg=sum(b.get("complexity",0) for b in blocks)/len(blocks)
+        result[file]=avg
+    return result
+
+def load_coverage(path):
+    with open(path) as f:
+        data=json.load(f)
+    if "files" in data:
+        return data["files"]
+    return data
+
+def load_criticality(path):
+    if not yaml:
+        raise RuntimeError("pyyaml required for criticality YAML")
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--churn", required=True)
+    ap.add_argument("--complexity", required=True)
+    ap.add_argument("--coverage")
+    ap.add_argument("--criticality")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--top", type=int, default=50)
+    args=ap.parse_args()
+
+    churn=load_churn(args.churn)
+    complexity=load_complexity(args.complexity)
+    coverage=load_coverage(args.coverage) if args.coverage else {}
+    criticality=load_criticality(args.criticality) if args.criticality else {}
+
+    max_churn=max(churn.values()) if churn else 1
+    max_cc=max(complexity.values()) if complexity else 1
+    max_crit=max(criticality.values()) if criticality else 1
+
+    w_churn=float(os.getenv("RISK_W_CHURN","0.4"))
+    w_complexity=float(os.getenv("RISK_W_COMPLEXITY","0.4"))
+    w_coverage=float(os.getenv("RISK_W_COVERAGE","0.1"))
+    w_crit=float(os.getenv("RISK_W_CRITICALITY","0.1"))
+    total = w_churn + w_complexity + w_coverage + w_crit
+    if not math.isclose(total,1.0):
+        w_churn/=total; w_complexity/=total; w_coverage/=total; w_crit/=total
+
+    files=set(churn)|set(complexity)|set(coverage)|set(criticality)
+    records=[]
+    for f in files:
+        c=churn.get(f,0)
+        cc=complexity.get(f,0)
+        cov=coverage.get(f,0.5)
+        cov_pen=(1 - cov)
+        crit=criticality.get(f,1)
+
+        norm_churn = c/max_churn if max_churn else 0
+        norm_cc = cc/max_cc if max_cc else 0
+        norm_crit = crit/max_crit if max_crit else 0
+
+        risk = (norm_churn*w_churn +
+                norm_cc*w_complexity +
+                cov_pen*w_coverage +
+                norm_crit*w_crit)
+
+        records.append({
+            "file": f,
+            "churn": c,
+            "avg_complexity": round(cc,2),
+            "coverage": round(cov,3),
+            "criticality": crit,
+            "risk_score": round(risk,4),
+            "components": {
+               "churn": round(norm_churn*w_churn,4),
+               "complexity": round(norm_cc*w_complexity,4),
+               "coverage_penalty": round(cov_pen*w_coverage,4),
+               "criticality_factor": round(norm_crit*w_crit,4)
+            }
+        })
+
+    records.sort(key=lambda r: r["risk_score"], reverse=True)
+    top=records[:args.top]
+
+    with open(args.out,"w") as f:
+        json.dump({
+            "meta":{
+                "weights":{
+                    "churn":w_churn,
+                    "complexity":w_complexity,
+                    "coverage":w_coverage,
+                    "criticality":w_crit
+                }
+            },
+            "hotspots": top
+        }, f, indent=2)
+
+    print(f"[HOTSPOTS] Wrote {len(top)} entries to {args.out}")
+
+if __name__=="__main__":
+    main()
+```
+
+```python name=scripts/ownership_diff.py
+#!/usr/bin/env python3
+"""
+ownership_diff.py
+
+Analyzes commit authorship concentration per directory and flags potential
+knowledge concentration risks.
+
+Inputs:
+  Runs 'git log' internally unless provided a pre-collected JSON.
+
+Flags:
+  - Directories where top contributor > threshold (default 0.6)
+  - Directories with single contributor over last N days
+  - Directories criticality weighting (optional YAML mapping directory->tier)
+
+JSON Output:
+{
+  "summary": {...},
+  "directories": [
+    {
+      "path":"src/core",
+      "total_commits":123,
+      "authors":[{"email":"a@x","count":70,"pct":0.569}, ...],
+      "top_concentration":0.569,
+      "flag":"HIGH_CONCENTRATION"
+    }
+  ]
+}
+"""
+import subprocess, argparse, json, os
+from collections import defaultdict, Counter
+from pathlib import Path
+
+try:
+    import yaml
+except:
+    yaml = None
+
+def git_files_since(days):
+    cmd = ["bash","-lc", f'git log --since={days}.days --name-only --pretty=format:"%ae"']
+    out = subprocess.check_output(cmd).decode().splitlines()
+    return out
+
+def bucket_by_directory(entries, depth):
+    dir_author = defaultdict(Counter)
+    current_author=None
+    for line in entries:
+        if "@" in line and "/" not in line:
+            current_author=line.strip()
+        elif "/" in line and current_author:
+            p=Path(line.strip())
+            # skip deletions/empties
+            if not str(p).strip():
+                continue
+            parts=p.parts[:depth]
+            d="/".join(parts)
+            dir_author[d][current_author]+=1
+    return dir_author
+
+def load_criticality(path):
+    if not path or not yaml: return {}
+    with open(path) as f:
+        return yaml.safe_load(f) or {}
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--days", type=int, default=90)
+    ap.add_argument("--depth", type=int, default=2)
+    ap.add_argument("--threshold", type=float, default=0.6)
+    ap.add_argument("--criticality")
+    ap.add_argument("--out", required=True)
+    args=ap.parse_args()
+
+    raw=git_files_since(args.days)
+    dir_author=bucket_by_directory(raw, args.depth)
+    crit_map=load_criticality(args.criticality)
+
+    results=[]
+    for d, counter in dir_author.items():
+        total=sum(counter.values())
+        authors=[]
+        for email, count in counter.most_common():
+            pct=count/total if total else 0
+            authors.append({"email":email,"count":count,"pct":round(pct,3)})
+        top_pct=authors[0]["pct"] if authors else 0
+        flag=None
+        if top_pct >= args.threshold and len(authors)>1:
+            flag="HIGH_CONCENTRATION"
+        elif len(authors)==1:
+            flag="SINGLE_CONTRIBUTOR"
+        crit=crit_map.get(d,1)
+        results.append({
+            "path":d,
+            "total_commits":total,
+            "authors":authors,
+            "top_concentration":top_pct,
+            "criticality":crit,
+            "flag":flag
+        })
+
+    results.sort(key=lambda r: (r["flag"] is not None, r["top_concentration"]*r["criticality"]), reverse=True)
+
+    summary={
+        "directories_analyzed": len(results),
+        "time_window_days": args.days,
+        "high_concentration_count": sum(1 for r in results if r["flag"]=="HIGH_CONCENTRATION"),
+        "single_contributor_count": sum(1 for r in results if r["flag"]=="SINGLE_CONTRIBUTOR")
+    }
+
+    with open(args.out,"w") as f:
+        json.dump({"summary":summary,"directories":results}, f, indent=2)
+
+    print(json.dumps(summary, indent=2))
+
+if __name__=="__main__":
+    main()
+```
+
+```python name=scripts/risk_update.py
+#!/usr/bin/env python3
+"""
+risk_update.py
+
+Aggregates multiple reports into a consolidated risk register delta.
+
+Inputs (any subset):
+  --hotspots hotspots.json (from hotspot_merge.py)
+  --drift drift_report.json (from scan_drift.py)
+  --ownership ownership.json (from ownership_diff.py)
+  --security findings_security.json (custom format)
+  --out consolidated_risk.json
+
+Security findings expected format:
+[
+  {"id":"SEC-001","severity":"HIGH","component":"auth_middleware.py","desc":"Missing rate limit"}
+]
+
+Produces:
+{
+  "timestamp": "...",
+  "sources": {...},
+  "derived_risks": [
+     { "id":"RISK-HOTSPOT-file.py", "type":"HOTSPOT", "severity":"MEDIUM", ... }
+  ]
+}
+
+Severity Heuristic (example):
+  - HOTSPOT risk_score >=0.75 -> HIGH
+  - HOTSPOT risk_score >=0.5 -> MEDIUM else LOW
+  - Ownership SINGLE_CONTRIBUTOR & criticality>=3 -> HIGH else MEDIUM
+  - Drift breach -> MEDIUM unless churn_ratio >= 0.3 then HIGH
+  - Security: passthrough severity
+"""
+import json, argparse, time
+
+def load(path):
+    if not path: return None
+    with open(path) as f: return json.load(f)
+
+def hotspot_sev(score):
+    if score >= 0.75: return "HIGH"
+    if score >= 0.5: return "MEDIUM"
+    return "LOW"
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--hotspots")
+    ap.add_argument("--drift")
+    ap.add_argument("--ownership")
+    ap.add_argument("--security")
+    ap.add_argument("--out", required=True)
+    args=ap.parse_args()
+
+    hotspots = load(args.hotspots)
+    drift = load(args.drift)
+    ownership = load(args.ownership)
+    security = load(args.security)
+
+    derived=[]
+
+    if hotspots:
+        for h in hotspots.get("hotspots",[]):
+            sev = hotspot_sev(h["risk_score"])
+            derived.append({
+                "id": f"RISK-HOTSPOT-{h['file']}",
+                "type":"HOTSPOT",
+                "component": h["file"],
+                "severity": sev,
+                "details": h,
+                "recommendation":"Refactor / add tests / reduce complexity; prioritize if part of production path."
+            })
+
+    if drift:
+        s=drift["summary"]
+        if s["breach"]:
+            sev = "HIGH" if s["churn_ratio"]>=0.3 else "MEDIUM"
+            derived.append({
+                "id": f"RISK-DRIFT-{s.get('current_ref')}",
+                "type":"ARCH_DRIFT",
+                "severity": sev,
+                "details": s,
+                "recommendation":"Initiate architecture review; validate new edges for boundary violations."
+            })
+        for flag in drift.get("core_boundary_flags",[]):
+            derived.append({
+                "id": f"RISK-BOUNDARY-{flag['from']}->{flag['to']}",
+                "type":"BOUNDARY_VIOLATION",
+                "severity":"MEDIUM",
+                "details": flag,
+                "recommendation":"Assess if new dependency is intentional; consider facade or inversion."
+            })
+
+    if ownership:
+        for d in ownership.get("directories",[]):
+            if not d.get("flag"): continue
+            sev="MEDIUM"
+            if d["flag"]=="SINGLE_CONTRIBUTOR" and d.get("criticality",1)>=3:
+                sev="HIGH"
+            elif d["flag"]=="HIGH_CONCENTRATION" and d.get("criticality",1)>=4:
+                sev="HIGH"
+            derived.append({
+                "id": f"RISK-OWN-{d['path']}",
+                "type":"KNOWLEDGE_CONCENTRATION",
+                "severity": sev,
+                "details": d,
+                "recommendation":"Spread knowledge via pairing, docs, secondary owner assignment."
+            })
+
+    if security:
+        for finding in security:
+            derived.append({
+                "id": finding.get("id","SEC-UNSET"),
+                "type":"SECURITY",
+                "severity": finding.get("severity","MEDIUM"),
+                "details": finding,
+                "recommendation": finding.get("remediation","Review & patch.")
+            })
+
+    out = {
+      "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+      "sources": {
+        "hotspots": bool(hotspots),
+        "drift": bool(drift),
+        "ownership": bool(ownership),
+        "security": bool(security)
+      },
+      "derived_risks": derived
+    }
+
+    with open(args.out,"w") as f:
+        json.dump(out,f,indent=2)
+
+    print(f"[RISK] Consolidated {len(derived)} risks -> {args.out}")
+
+if __name__=="__main__":
+    main()
+```
+
+```yaml name=scripts/config/drift_config.yaml
+# drift_config.yaml
+# Example configuration for future extension of scan_drift.py (not yet fully consumed)
+threshold: 0.12         # override default drift threshold
+boundary_alert: true
+ignored_edges:
+  - from: experimental/*
+    to: legacy/*
+ignored_nodes:
+  - sandbox-service
+classification:
+  core_modules:
+    - src/core/*
+    - internal/domain/*
+```
+
+````markdown name=scripts/README.md
+# Scripts Toolkit
+
+This directory contains automation utilities supporting reverse engineering and ongoing architecture governance for a closed-source monorepo or multi-service environment.
+
+## Overview
+
+| Script | Purpose | Key Output |
+|--------|---------|------------|
+| gen_sbom.sh | Generate CycloneDX/SPDX SBOMs across ecosystems | sbom_combined.cyclonedx.json |
+| scan_drift.py | Compare dependency / service graphs for drift | drift_report.json |
+| hotspot_merge.py | Merge churn + complexity + coverage + criticality into ranked hotspots | hotspots.json |
+| ownership_diff.py | Detect knowledge concentration per directory | ownership.json |
+| risk_update.py | Aggregate multiple analyses into consolidated risk register | consolidated_risk.json |
+
+## Suggested CI Pipeline Steps
+
+```mermaid
+flowchart LR
+  A[Checkout] --> B[gen_sbom.sh]
+  B --> C[Complexity & Churn Jobs]
+  C --> D[hotspot_merge.py]
+  D --> E[scan_drift.py]
+  E --> F[ownership_diff.py]
+  F --> G[risk_update.py]
+  G --> H[Publish Artifacts + Dashboard]
+```
+
+## Example Make Targets
+
+```make
+sbom:
+\t./scripts/gen_sbom.sh --out artifacts/sbom --ref $(shell git rev-parse HEAD)
+
+hotspots:
+\tradon cc -j -s src/ > artifacts/complexity.json
+\tgit log --since=90.days --name-only --pretty=format: | sort | grep -v '^$$' | uniq -c > artifacts/churn.txt
+\tpython3 scripts/hotspot_merge.py --churn artifacts/churn.txt --complexity artifacts/complexity.json --out artifacts/hotspots.json
+
+drift:
+\tpython3 scripts/scan_drift.py --current artifacts/current_graph.json --previous artifacts/previous_graph.json --out artifacts/drift_report.json
+
+ownership:
+\tpython3 scripts/ownership_diff.py --out artifacts/ownership.json
+
+risk:
+\tpython3 scripts/risk_update.py --hotspots artifacts/hotspots.json --drift artifacts/drift_report.json --ownership artifacts/ownership.json --out artifacts/consolidated_risk.json
+```
+
+## Security & Privacy Notes
+
+- Never commit raw proprietary code into SBOM outputs—SBOMs should only list dependency coordinates.
+- Redact or classify artifacts with a footer: `Generated from commit <sha> at <timestamp> Classification: Internal`.
+- If using LLM summarization, feed only structural metadata (file paths, complexity metrics), not full file contents, unless approved.
+
+## Extending
+
+- Add coverage ingestion: produce `coverage.json` with `{ "files": { "path": fraction } }`.
+- Add custom risk weighting via environment variables for `hotspot_merge.py`.
+
+## Next Steps
+
+- Integrate dashboards (e.g., Backstage plugin) to surface top hotspots and drift deltas.
+- Schedule nightly drift detection with alerting (Slack webhook on exit code 2).
+````
+
+````markdown name=templates/executive_summary_template.md
+# Executive Architecture & Risk Summary
+Generated: {{DATE}}  
+Source Refs: {{REPO_LIST_WITH_SHAS}}  
+Classification: {{CLASSIFICATION_LEVEL}}  
+Prepared By: {{AUTHOR}}  
+
+## 1. Objectives
+- Primary Goal(s): {{GOALS}}  
+- Scope: {{IN_SCOPE_COMPONENTS}}  
+- Exclusions: {{OUT_OF_SCOPE}}  
+
+## 2. High-Level Architecture Snapshot
+Describe the current logical layers, key services, and primary data stores.
+
+| Layer | Components | Purpose | Notes |
+|-------|------------|---------|-------|
+| Ingress | {{API_GATEWAYS}} | Entry points | |
+| Core Domain | {{CORE_SERVICES}} | Business logic | |
+| Data | {{DATA_STORES}} | Persistence | |
+| Integration | {{EXT_APIS}} | External dependencies | |
+| Observability | {{OBS_STACK}} | Monitoring & tracing | |
+
+## 3. Key Findings (Top 5)
+1. {{FINDING_1}} (Impact: {{IMPACT_1}}, Severity: {{SEVERITY_1}})
+2. {{FINDING_2}}
+3. {{FINDING_3}}
+4. {{FINDING_4}}
+5. {{FINDING_5}}
+
+## 4. Risk Heat Map
+| Category | High | Medium | Low | Notes |
+|----------|------|--------|-----|-------|
+| Security | {{SEC_HIGH}} | {{SEC_MED}} | {{SEC_LOW}} | {{SEC_NOTES}} |
+| Architecture Drift | {{DRIFT_HIGH}} | {{DRIFT_MED}} | {{DRIFT_LOW}} | |
+| Knowledge Concentration | {{KNOW_HIGH}} | {{KNOW_MED}} | {{KNOW_LOW}} | |
+| Performance | {{PERF_HIGH}} | {{PERF_MED}} | {{PERF_LOW}} | |
+| Compliance | {{COMP_HIGH}} | {{COMP_MED}} | {{COMP_LOW}} | |
+
+## 5. Hotspots (Code-Level)
+| File/Module | Risk Score | Components (Churn/Complexity/Coverage/Crit) | Rationale | Action |
+|-------------|-----------:|---------------------------------------------|-----------|--------|
+| {{FILE_1}} | {{RISK_1}} | {{COMP_BREAKDOWN_1}} | {{WHY_1}} | {{ACTION_1}} |
+| {{FILE_2}} | {{RISK_2}} | {{COMP_BREAKDOWN_2}} | {{WHY_2}} | {{ACTION_2}} |
+
+## 6. Architecture Drift Summary
+- New Nodes: {{DRIFT_ADDED_NODES}}
+- Removed Nodes: {{DRIFT_REMOVED_NODES}}
+- Edge Churn Ratio: {{DRIFT_CHURN_RATIO}}
+- Boundary Violations: {{BOUNDARY_FLAGS_COUNT}}
+- Assessment: {{DRIFT_ASSESSMENT}}
+
+## 7. Security Snapshot
+| Area | Status | Notable Gaps | Priority Action |
+|------|--------|--------------|-----------------|
+| AuthN/AuthZ | {{AUTH_STATUS}} | {{AUTH_GAPS}} | {{AUTH_ACTION}} |
+| Secrets Mgmt | {{SECRETS_STATUS}} | {{SECRETS_GAPS}} | {{SECRETS_ACTION}} |
+| Dependency Vulns | {{VULN_STATUS}} | {{VULN_GAPS}} | {{VULN_ACTION}} |
+| Input Validation | {{VALID_STATUS}} | {{VALID_GAPS}} | {{VALID_ACTION}} |
+| Logging & Audit | {{AUDIT_STATUS}} | {{AUDIT_GAPS}} | {{AUDIT_ACTION}} |
+
+## 8. Knowledge Concentration
+| Path | Top Contributor % | Flag | Criticality | Mitigation |
+|------|-------------------|------|-------------|------------|
+| {{PATH_1}} | {{PCT_1}} | {{FLAG_1}} | {{CRIT_1}} | {{MITIGATION_1}} |
+
+## 9. Compliance Coverage Matrix
+| Control Domain | Evidence Source | Gap | Action | Owner | Target Date |
+|----------------|-----------------|-----|--------|-------|-------------|
+| {{DOMAIN_1}} | {{EVIDENCE_1}} | {{GAP_1}} | {{ACTION_1}} | {{OWNER_1}} | {{DATE_1}} |
+
+## 10. Prioritized Remediation (Next 90 Days)
+| Rank | Title | Category | Effort | Impact | Owner | Dependency | ETA |
+|------|-------|----------|--------|--------|-------|-----------|-----|
+| 1 | {{ITEM_1}} | {{CAT_1}} | {{EFFORT_1}} | {{IMPACT_1}} | {{OWNER_1}} | {{DEP_1}} | {{ETA_1}} |
+
+## 11. KPIs & Baselines
+| Metric | Current | Target | Trend | Notes |
+|--------|---------|--------|-------|-------|
+| Lead Time | {{LEAD_TIME}} | {{LEAD_TARGET}} | {{TREND}} | |
+| Change Failure Rate | {{CHANGE_FAIL}} | {{CHANGE_TARGET}} | | |
+| Test Coverage (Critical Paths) | {{COVERAGE}} | {{COVERAGE_TARGET}} | | |
+| Mean Time to Restore | {{MTTR}} | {{MTTR_TARGET}} | | |
+| Drift Churn Ratio | {{DRIFT_RATIO}} | < {{DRIFT_THRESHOLD}} | | |
+
+## 12. Next Review Cycle
+- Proposed Date: {{NEXT_REVIEW_DATE}}
+- Trigger Conditions: (e.g., drift > threshold, security CVE > critical)
+
+## 13. Appendices
+- Methodology
+- Tooling & Commands
+- Data Integrity Notes
+- Glossary
+
+Footer: Generated from commits {{REPO_LIST_WITH_SHAS}} on {{DATE}} — Classification: {{CLASSIFICATION_LEVEL}}
+````
+
+```yaml name=templates/remediation_backlog.yaml
+# Remediation Backlog Scaffold
+# Populate and store in version control. Each item can map to an issue tracker ID.
+
+version: 1
+generated_at: 2025-10-03T00:00:00Z
+time_horizon_days: 90
+scoring:
+  impact_scale: 1-5
+  effort_scale: S=1,M=2,L=3
+  formula: "(impact * urgency * criticality) / effort_weight"
+  notes: |
+    - impact: revenue/user/security effect
+    - urgency: time sensitivity or regulatory deadline
+    - criticality: system tier (1-5)
+    - effort_weight: S=1, M=2, L=3 (approx engineering weeks / cost proxy)
+
+items:
+  - id: HOTSPOT-CORE-001
+    title: Refactor payment validation module
+    category: code-quality
+    source: hotspot_analysis
+    description: High churn + high complexity + low coverage in core revenue path.
+    impact: 5
+    urgency: 4
+    criticality: 5
+    effort: M
+    dependencies: []
+    owner: team-payments
+    target_date: 2025-11-15
+    rationale: "Reduces regression risk and accelerates feature velocity"
+    acceptance_criteria:
+      - Complexity score < 10 average
+      - Unit coverage > 85% for module files
+      - No circular dependencies
+    tracking_issue: "PAY-3421"
+    status: planned
+
+  - id: SECURITY-AUTH-002
+    title: Enforce role-based authorization checks on admin endpoints
+    category: security
+    source: security_scan
+    description: Several admin routes bypass explicit RBAC middleware.
+    impact: 5
+    urgency: 5
+    criticality: 4
+    effort: S
+    dependencies: []
+    owner: team-platform
+    target_date: 2025-10-30
+    rationale: "Prevents privilege escalation vectors"
+    acceptance_criteria:
+      - All admin routes pass RBAC middleware
+      - Authorization tests for 100% of admin endpoints
+    tracking_issue: "PLAT-1189"
+    status: in-progress
+
+  - id: DRIFT-ARCH-003
+    title: Review and formalize new dependency between billing-core and pricing-engine
+    category: architecture
+    source: drift_detection
+    description: New edge introduced raising coupling in core domain.
+    impact: 4
+    urgency: 3
+    criticality: 5
+    effort: S
+    dependencies: []
+    owner: arch-guild
+    target_date: 2025-11-05
+    rationale: "Prevent architectural erosion and future cascade changes"
+    acceptance_criteria:
+      - ADR documenting decision or alternative implemented
+      - Coupling metrics stable or reduced
+    tracking_issue: "ARCH-207"
+    status: planned
+
+  - id: KNOWLEDGE-RISK-004
+    title: Distribute ownership of core ledger directory
+    category: org-risk
+    source: ownership_analysis
+    description: Single contributor >85% commits last 90 days.
+    impact: 4
+    urgency: 4
+    criticality: 5
+    effort: M
+    dependencies: []
+    owner: eng-lead-finance
+    target_date: 2025-12-01
+    rationale: "Reduce key-person risk"
+    acceptance_criteria:
+      - Top contributor share < 60%
+      - Onboarding doc created
+      - Secondary code owner added
+    tracking_issue: "FIN-902"
+    status: planned
+
+  - id: OBS-GAP-005
+    title: Add distributed tracing to checkout workflow
+    category: observability
+    source: observability_review
+    description: Missing spans across 3 internal calls causing blind spots.
+    impact: 3
+    urgency: 3
+    criticality: 4
+    effort: S
+    dependencies: []
+    owner: team-observability
+    target_date: 2025-11-10
+    rationale: "Reduce MTTR and enable performance optimizations"
+    acceptance_criteria:
+      - p95 latency breakdown spans present
+      - Error attribution per service
+    tracking_issue: "OBS-143"
+    status: planned
+```
+
+````markdown name=templates/ai_safe_prompts.md
+# AI-Safe Summarization Prompt Templates
+
+Use these templates with an internal-approved model endpoint. DO NOT send raw proprietary secrets or full unfiltered source code. Feed only sanitized inputs.
+
+## 1. File Responsibility Summary
+
+System Prompt (Example):
+"You are an internal code analysis assistant. You must not output raw code beyond line references or function names. If sensitive tokens / secrets detected, redact."
+
+User Prompt Template:
+Summarize the following file's purpose and risks.
+
+Context (JSON):
+{
+  "file_path": "{{FILE_PATH}}",
+  "language": "{{LANG}}",
+  "hash": "{{SHA256}}",
+  "exports": {{EXPORT_SYMBOLS_JSON}},
+  "imports": {{IMPORT_SYMBOLS_JSON}},
+  "metrics": {
+    "lines": {{LINE_COUNT}},
+    "avg_complexity": {{AVG_COMPLEXITY}},
+    "churn_90d": {{CHURN}},
+    "coverage": {{COVERAGE}}
+  },
+  "structural_outline": {{OUTLINE_JSON}}
+}
+
+Instructions:
+1. Provide: Purpose, Key Responsibilities, Coupling Notes, Potential Risks (security, performance, maintainability), Suggested Actions.
+2. Do not include raw code; only mention function/class names and high-level behaviors.
+3. If complexity > threshold (10) or churn in top quartile, highlight as hotspot.
+4. Redact any suspected secrets (replace with "<REDACTED>").
+
+Output JSON schema:
+{
+  "file": "{{FILE_PATH}}",
+  "purpose": "...",
+  "responsibilities": ["..."],
+  "risks": [{"type":"maintainability","detail":"..."}],
+  "suggested_actions": ["..."],
+  "hotspot_flag": true/false
+}
+
+## 2. Service-Level Summary
+
+User Prompt Template:
+"Produce a service summary."
+
+Context:
+{
+  "service_name": "{{SERVICE}}",
+  "repo": "{{REPO}}",
+  "endpoints": {{ENDPOINT_LIST}},
+  "event_topics": {{EVENTS_LIST}},
+  "dependencies": {{DEPENDENCIES_LIST}},
+  "data_stores": {{DATA_STORES_LIST}},
+  "risk_inputs": {
+     "hotspot_count": {{HOTSPOT_COUNT}},
+     "drift_flags": {{DRIFT_FLAGS}},
+     "security_findings": {{SEC_FINDINGS}}
+  }
+}
+
+Instructions:
+1. Summarize service role in 2–3 sentences.
+2. List external contracts (endpoints + events) with brief purpose.
+3. Consolidate top 3 risks referencing risk_inputs.
+4. Recommend top 3 remediation actions.
+5. Avoid code excerpts; structural only.
+
+## 3. Risk Synthesis Prompt
+
+User Prompt Template:
+"Generate prioritized risk list."
+
+Inputs:
+{
+  "hotspots": {{HOTSPOT_JSON_ARRAY}},
+  "ownership": {{OWNERSHIP_RISKS}},
+  "drift": {{DRIFT_FLAGS}},
+  "security": {{SECURITY_FINDINGS}}
+}
+
+Instructions:
+1. Merge similar risks (e.g., multiple hotspots in same module → single refactor item).
+2. Assign severity (HIGH/MED/LOW) using rules:
+   - Security HIGH overrides others.
+   - Hotspot risk_score >=0.75 -> HIGH.
+   - Knowledge concentration + criticality >=4 -> HIGH.
+3. Output ordered array with rationale and recommended action.
+
+Output JSON:
+[
+  {
+    "id":"RISK-001",
+    "category":"security|hotspot|ownership|drift",
+    "severity":"HIGH",
+    "summary":"...",
+    "rationale":"...",
+    "action":"...",
+    "evidence_refs":["hotspot:core/file.py","sec:SEC-001"]
+  }
+]
+
+## 4. Architecture Delta Explanation
+
+User Prompt Template:
+Explain architecture changes between two snapshots.
+
+Inputs:
+{
+  "previous_ref": "{{PREV_SHA}}",
+  "current_ref": "{{CUR_SHA}}",
+  "added_nodes": {{ADDED_NODES}},
+  "removed_nodes": {{REMOVED_NODES}},
+  "added_edges": {{ADDED_EDGES}},
+  "removed_edges": {{REMOVED_EDGES}},
+  "core_boundary_flags": {{BOUNDARY_FLAGS}}
+}
+
+Instructions:
+1. Concise description of meaningful changes.
+2. Call out potential boundary violations (core_boundary_flags).
+3. Suggest governance actions (ADR, dependency inversion, service extraction).
+4. Limit to 300 words; no code.
+
+## 5. Compliance Control Evidence Prompt
+
+User Prompt Template:
+Generate compliance evidence mapping.
+
+Inputs:
+{
+  "controls": {{CONTROL_LIST}},
+  "artifacts": {{ARTIFACT_METADATA}},
+  "gaps": {{GAPS}}
+}
+
+Instructions:
+1. Map each control to existing evidence or mark as gap.
+2. Suggest minimal additional artifact to close gap.
+3. Output JSON array control->evidence->gap->action.
+
+## Sanitization Guidelines (Pre-Prompt)
+Perform these steps before sending:
+- Strip lines containing patterns like 'SECRET', 'PRIVATE_KEY', 'PASSWORD'.
+- Replace emails with pattern user_<hash>@internal.
+- Collapse numeric constants > 10 digits into "<NUM>".
+
+## Redaction Policy
+If summary risk includes potential IP (novel algorithm names), generalize: "proprietary algorithm module."
+
+---
+````
+
+## Next Steps / Optional Enhancements
+
+- Want containerized versions? I can produce a Dockerfile.
+- Need language-specific complexity adapters (e.g., Go, Java) or integration with Backstage/Graph viz? Ask for extension.
+- To operationalize: add GitHub Actions workflow using these scripts.
+
+Let me know if you’d like any of:
+1. Dockerfile + CI workflow
+2. Backstage plugin data format
+3. Security findings ingestion example
+4. Custom risk weighting formulas
+
+Just tell me which.
+
+---
+5
+---
+
+Below are the deliverables you requested for (1) Dockerfile + CI workflow, (2) Backstage plugin data format, (3) Security findings ingestion example, and (4) Custom risk weighting formulas. All artifacts are provided as file blocks so you can drop them into your repo. Adjust paths/names as needed.
+
+```dockerfile name=Dockerfile.analysis
+# Docker image for architecture & risk analysis pipeline
+# Focus: reproducible environment to run scripts (SBOM, drift, hotspots, ownership, security ingestion)
+# Base: slim Debian + multiple runtimes
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+
+ARG NODE_VERSION=20.11.1
+ARG GO_VERSION=1.22.4
+ARG SYFT_VERSION=1.15.0
+ARG TRIVY_VERSION=0.53.0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/opt/go/bin:/workspace/.local/bin:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git jq build-essential python3 python3-venv python3-pip \
+    graphviz ca-certificates unzip gnupg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get update && apt-get install -y nodejs && npm -v && node -v
+
+# Install Go
+RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz -o /tmp/go.tgz && \
+    tar -C /opt -xzf /tmp/go.tgz && ln -s /opt/go/bin/go /usr/local/bin/go && go version
+
+# Python tooling (radon etc.)
+RUN pip install --no-cache-dir radon==6.0.1 pipdeptree==2.23.1 cyclonedx-bom==4.3.5 trufflehog==2.2.0 pyyaml==6.0.2
+
+# Install Syft
+RUN curl -sSfL https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb -o /tmp/syft.deb && \
+    dpkg -i /tmp/syft.deb && syft version
+
+# Install Trivy
+RUN curl -sSfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb -o /tmp/trivy.deb && \
+    dpkg -i /tmp/trivy.deb && trivy -v
+
+# Optional: Install gitleaks (secret scanning)
+RUN curl -sSfL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_$(uname -s)_$(uname -m).tar.gz -o /tmp/gitleaks.tgz && \
+    tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks && gitleaks version || true
+
+# Create working directory
+WORKDIR /workspace
+
+# Copy scripts (adjust path if you stage them first)
+# (You will typically COPY only scripts & configs; source repo is mounted at runtime in CI.)
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+RUN chmod +x scripts/*.sh || true
+
+# Health / versions summary
+RUN echo "Installed Components:" && \
+    python3 --version && \
+    npm --version && \
+    go version && \
+    syft version && \
+    trivy -v || true
+
+ENTRYPOINT ["/bin/bash"]
+```
+
+```gitignore name=.dockerignore
+# Reduce build context
+.git
+.gitignore
+.github
+node_modules
+dist
+build
+artifacts
+__pycache__
+*.pyc
+*.log
+*.tmp
+Dockerfile*
+```
+
+```yaml name=.github/workflows/arch-governance.yml
+name: Architecture & Risk Governance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"  # Daily 03:00 UTC
+
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Radon & tools
+        run: |
+          pip install radon pipdeptree cyclonedx-bom pyyaml
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update && sudo apt-get install -y wget
+          sudo apt-get install -y rpm
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM
+        run: |
+          mkdir -p artifacts/sbom
+          bash scripts/gen_sbom.sh --out artifacts/sbom --ref "$(git rev-parse HEAD)"
+
+      - name: Complexity + Churn
+        run: |
+          mkdir -p artifacts
+          radon cc -j -s src/ > artifacts/complexity.json || echo '{}' > artifacts/complexity.json
+          git log --since=90.days --name-only --pretty=format: | sort | grep -v '^$' | uniq -c > artifacts/churn.txt || echo '' > artifacts/churn.txt
+
+      - name: Coverage (optional)
+        run: |
+          if [ -f coverage.xml ]; then
+            # Convert coverage.xml to simple JSON (placeholder)
+            python scripts/util_coverage_convert.py coverage.xml artifacts/coverage.json || echo '{"files":{}}' > artifacts/coverage.json
+          else
+            echo '{"files":{}}' > artifacts/coverage.json
+          fi
+
+      - name: Hotspot Merge
+        run: |
+          python scripts/hotspot_merge.py \
+            --churn artifacts/churn.txt \
+            --complexity artifacts/complexity.json \
+            --coverage artifacts/coverage.json \
+            --out artifacts/hotspots.json
+
+      - name: Build Dependency Graph (placeholder)
+        run: |
+          # Replace with real graph generator.
+          echo '{"nodes":[],"edges":[],"meta":{"ref":"'"$(git rev-parse HEAD)"'"}}' > artifacts/current_graph.json
+          if [ ! -f artifacts/previous_graph.json ]; then
+            cp artifacts/current_graph.json artifacts/previous_graph.json
+          fi
+
+      - name: Drift Detection
+        run: |
+          python scripts/scan_drift.py \
+            --current artifacts/current_graph.json \
+            --previous artifacts/previous_graph.json \
+            --out artifacts/drift_report.json || true
+
+      - name: Ownership Diff
+        run: |
+          python scripts/ownership_diff.py --out artifacts/ownership.json
+
+      - name: Security Ingestion (Trivy example)
+        run: |
+          trivy fs --severity HIGH,CRITICAL --format json . > artifacts/trivy_raw.json || echo '[]' > artifacts/trivy_raw.json
+          python scripts/parse_trivy.py --input artifacts/trivy_raw.json --out artifacts/security_findings.json
+
+      - name: Consolidated Risk
+        run: |
+          python scripts/risk_update.py \
+            --hotspots artifacts/hotspots.json \
+            --drift artifacts/drift_report.json \
+            --ownership artifacts/ownership.json \
+            --security artifacts/security_findings.json \
+            --out artifacts/consolidated_risk.json
+
+      - name: Persist Previous Graph
+        if: always()
+        run: |
+          cp artifacts/current_graph.json artifacts/previous_graph.json
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-governance-${{ github.run_id }}
+          path: artifacts/
+
+      - name: (Optional) Open Issue on Drift Breach
+        if: failure() # or parse drift_report.json for breach
+        run: |
+          echo "Would create an issue here if drift breach or high severity risks."
+
+```
+
+````markdown name=docs/backstage-data-format.md
+# Backstage Integration Data Format
+
+This document defines how analysis artifacts integrate with Backstage entities.
+
+## 1. Entity Annotations
+
+Add annotations to `Component` or `Service` entities to surface analysis metadata:
+
+| Annotation | Description | Source Artifact |
+|------------|-------------|-----------------|
+| analysis.hotspotsScore | Aggregated (mean or max) risk score for service-owned files | hotspots.json |
+| analysis.knowledgeConcentration | % top contributor for service directory | ownership.json |
+| analysis.lastRiskUpdate | Timestamp of consolidated_risk.json | consolidated_risk.json |
+| analysis.driftChurnRatio | Edge churn ratio if service participates in dependency graph | drift_report.json |
+| analysis.securityFindings | Count of HIGH severity security findings mapped to service | security_findings.json |
+
+## 2. Mapping Strategy
+
+1. Maintain a mapping file: `config/service_paths.yaml`
+```yaml
+services:
+  payments-service:
+    paths:
+      - "src/payments/"
+  billing-service:
+    paths:
+      - "src/billing/"
+```
+
+2. Aggregation Script (pseudo):
+- For each service, gather hotspots where `file` path prefixed by any service path.
+- Compute metrics:
+  - max_risk_score
+  - avg_risk_score
+  - high_risk_count (score >= 0.75)
+  - knowledge_concentration (from ownership.json directory matching)
+  - security_high_count (security_findings.json with component path)
+  - driftChurnRatio (global, optionally gate on membership)
+
+3. Emit a Backstage `Location` or patch existing definitions.
+
+## 3. Example Enriched Component YAML
+
+See `backstage-entities.example.yaml` for a practical structure.
+
+## 4. Dashboard Widgets (Concept)
+
+- Hotspot Table: Displays top 5 hotspot files for the selected service.
+- Risk Trend: Plot `analysis.hotspotsScore` over time (requires time-series persistence).
+- Ownership Gauge: Shows `% top contributor (90d)` vs threshold (e.g., 60%).
+
+## 5. Security Linking
+
+Each security finding includes `component` property referencing file path; map to service by prefix. Provide a link in Backstage to internal security dashboard (e.g., `/security/findings?service=payments-service`).
+
+## 6. Update Process
+
+Nightly pipeline:
+1. Run analysis.
+2. Generate `backstage_metrics.json`:
+```json
+{
+  "payments-service": {
+    "max_risk": 0.82,
+    "avg_risk": 0.53,
+    "high_risk_count": 7,
+    "knowledge_concentration_pct": 0.67,
+    "security_high_count": 2,
+    "driftChurnRatio": 0.14,
+    "last_update": "2025-10-03T03:04:05Z"
+  }
+}
+```
+3. A script patches Backstage entities (if self-managed) or updates a central metrics API consumed by a Backstage plugin.
+
+## 7. Classification
+
+Attach metadata block as:
+```
+x-analysis-metadata:
+  sourceRefs:
+    - commit: <sha>
+    - artifactsVersion: 1
+  classification: Internal
+```
+
+## 8. Extensibility
+
+You can add SLO / latency percentiles as annotations (`slo.latencyP95=...`) allowing correlation between risk hotspots and performance.
+
+---
+````
+
+```yaml name=backstage-entities.example.yaml
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: payments-service
+  description: Handles user payment intent creation and settlement.
+  annotations:
+    analysis.hotspotsScore: "0.82"
+    analysis.knowledgeConcentration: "0.67"
+    analysis.securityFindings: "2"
+    analysis.driftChurnRatio: "0.14"
+    analysis.lastRiskUpdate: "2025-10-03T03:04:05Z"
+    git.repository: "github.com/org/payments-service"
+  tags:
+    - tier0
+    - revenue
+spec:
+  type: service
+  owner: team-payments
+  lifecycle: production
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: billing-service
+  annotations:
+    analysis.hotspotsScore: "0.55"
+    analysis.knowledgeConcentration: "0.45"
+    analysis.securityFindings: "0"
+    analysis.driftChurnRatio: "0.06"
+    analysis.lastRiskUpdate: "2025-10-03T03:04:05Z"
+    git.repository: "github.com/org/billing-service"
+spec:
+  type: service
+  owner: team-finance
+  lifecycle: production
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: monetization-system
+  description: Payment and billing ecosystem.
+spec:
+  owner: finance-platform
+  domain: finance
+  components:
+    - payments-service
+    - billing-service
+```
+
+```python name=scripts/parse_trivy.py
+#!/usr/bin/env python3
+"""
+parse_trivy.py
+
+Converts raw Trivy JSON output into normalized security findings expected by risk_update.py.
+
+Usage:
+  python scripts/parse_trivy.py --input artifacts/trivy_raw.json --out artifacts/security_findings.json
+
+Output Schema (list):
+[
+  {
+    "id": "SEC-TRIVY-CVE-2024-12345",
+    "severity": "HIGH",
+    "component": "requirements.txt::package@1.0.0",
+    "desc": "Summary",
+    "cve": "CVE-2024-12345",
+    "package": "package",
+    "installed_version": "1.0.0",
+    "fixed_version": "1.0.1",
+    "recommendation": "Upgrade to 1.0.1"
+  }
+]
+"""
+import json, argparse, sys
+
+SEV_ORDER = ["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"]
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    try:
+        with open(args.input) as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[WARN] Could not read input: {e}", file=sys.stderr)
+        data = {}
+
+    results = []
+    # Trivy output may be either a dict with "Results" or a list per target
+    if isinstance(data, dict):
+        candidates = [data]
+    elif isinstance(data, list):
+        candidates = data
+    else:
+        candidates = []
+
+    for item in candidates:
+        for result in item.get("Results", []):
+            target = result.get("Target", "UNKNOWN_TARGET")
+            for vuln in result.get("Vulnerabilities", []) or []:
+                sev = vuln.get("Severity","UNKNOWN").upper()
+                pkg = vuln.get("PkgName","unknown")
+                inst = vuln.get("InstalledVersion","?")
+                fix = vuln.get("FixedVersion")
+                cve = vuln.get("VulnerabilityID","")
+                summary = vuln.get("Title") or vuln.get("Description","")
+                rec = f"Upgrade to {fix}" if fix else "Monitor upstream; no fixed version."
+                results.append({
+                    "id": f"SEC-TRIVY-{cve}",
+                    "severity": "HIGH" if sev == "CRITICAL" else sev,
+                    "component": f"{target}::{pkg}@{inst}",
+                    "desc": summary[:300],
+                    "cve": cve,
+                    "package": pkg,
+                    "installed_version": inst,
+                    "fixed_version": fix,
+                    "recommendation": rec
+                })
+
+    with open(args.out,"w") as f:
+        json.dump(results,f,indent=2)
+
+    print(f"[SECURITY] Normalized {len(results)} findings -> {args.out}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```json name=examples/security_findings.sample.json
+[
+  {
+    "id": "SEC-TRIVY-CVE-2024-11111",
+    "severity": "HIGH",
+    "component": "requirements.txt::openssl@1.0.2",
+    "desc": "Example vulnerability in OpenSSL library.",
+    "cve": "CVE-2024-11111",
+    "package": "openssl",
+    "installed_version": "1.0.2",
+    "fixed_version": "1.0.3",
+    "recommendation": "Upgrade to 1.0.3"
+  },
+  {
+    "id": "SEC-TRIVY-CVE-2025-22222",
+    "severity": "MEDIUM",
+    "component": "package.json::lodash@4.17.19",
+    "desc": "Prototype pollution in lodash.",
+    "cve": "CVE-2025-22222",
+    "package": "lodash",
+    "installed_version": "4.17.19",
+    "fixed_version": "4.17.21",
+    "recommendation": "Upgrade to 4.17.21"
+  }
+]
+```
+
+```yaml name=config/risk_weights.yaml
+# Custom Risk Weight Configuration
+# Used to override default weights in hotspot_merge.py or risk_update pipeline.
+
+version: 1
+last_updated: 2025-10-03T06:30:00Z
+weights:
+  churn: 0.30
+  complexity: 0.35
+  coverage_gap: 0.15
+  criticality: 0.10
+  security_hotspot: 0.10  # Additional dimension (optional extension)
+thresholds:
+  hotspot_high: 0.70
+  hotspot_medium: 0.50
+  ownership_concentration: 0.60
+  drift_churn_high: 0.30
+  drift_churn_medium: 0.12
+severity_overrides:
+  security_CRITICAL: HIGH
+  security_HIGH: HIGH
+  security_MEDIUM: MEDIUM
+  security_LOW: LOW
+scoring_notes: |
+  Adjust churn vs complexity emphasis based on stability goal:
+  - Increase complexity weight for refactoring phase.
+  - Increase churn weight pre-release freeze to target volatile modules.
+  coverage_gap: "1 - coverage (0..1)"
+```
+
+````markdown name=docs/risk-weighting.md
+# Custom Risk Weighting Framework
+
+This document explains how to adapt risk scoring beyond the default heuristic.
+
+## 1. Dimensions
+
+| Dimension | Source | Interpretation |
+|-----------|--------|---------------|
+| Churn | git log (90d) | Volatility -> instability risk |
+| Complexity | static analysis (radon / plato) | Maintenance & defect probability |
+| Coverage Gap | 1 - coverage% | Confidence in change safety |
+| Criticality | manual or tier mapping | Business impact multiplier |
+| Security Hotspot | count/flag presence | Elevate modules with security issues |
+
+## 2. Formula Variants
+
+### 2.1 Linear Weighted Composite
+score = Σ (w_i * normalized_i)
+
+Recommended for transparency. Use `config/risk_weights.yaml`.
+
+### 2.2 Non-Linear Emphasis (Highlight Extremes)
+score = ( (churn_norm^1.2 * w_churn) + (complexity_norm^1.3 * w_complexity) + (coverage_gap^1.1 * w_cov) ) * (1 + 0.15 * criticality_norm)
+
+Effect: Push very high churn/complexity modules upward.
+
+### 2.3 Security Escalation Rule
+If security severity HIGH & file appears in hotspots list:
+  final_severity = HIGH regardless of numeric score.
+
+## 3. Normalization
+
+- churn_norm = churn / max_churn
+- complexity_norm = complexity / max_complexity
+- coverage_gap already in [0..1]
+- criticality_norm = tier / max_tier
+
+Optionally clamp outliers (e.g., complexity > 50 → treat as 50) to reduce skew.
+
+## 4. Applying Dynamic Weight Profiles
+
+| Scenario | Adjustments |
+|----------|-------------|
+| Pre-release hardening | Increase coverage_gap weight |
+| Large refactor campaign | Increase complexity weight |
+| Security incident posture | Add security_hotspot dimension at >= 0.20 weight |
+| Stabilizing legacy | Increase churn weight; freeze new edges |
+
+## 5. Integration
+
+1. Update `config/risk_weights.yaml`.
+2. Export environment variables for `hotspot_merge.py`:
+```
+export RISK_W_CHURN=0.3
+export RISK_W_COMPLEXITY=0.35
+export RISK_W_COVERAGE=0.15
+export RISK_W_CRITICALITY=0.10
+```
+3. Extend script (example below) for security dimension.
+
+## 6. Example Extended Calculation (Pseudo-Python)
+```python
+risk = (
+  churn_norm * w_churn +
+  complexity_norm * w_complexity +
+  coverage_gap * w_cov +
+  criticality_norm * w_crit +
+  security_flag * w_sec  # 1 if file has security finding else 0
+)
+```
+
+## 7. Severity Mapping
+
+| Score Range | Default Severity |
+|-------------|------------------|
+| ≥ 0.70 | HIGH |
+| 0.50–0.69 | MEDIUM |
+| < 0.50 | LOW |
+
+Override if:
+- Knowledge concentration > 0.80 & criticality ≥ 4 → escalate one level.
+- Drift boundary violation touches module → escalate module severity to at least MEDIUM.
+
+## 8. Governance
+
+- Revalidate weight config quarterly.
+- Keep prior configs (versioned) for audit trail.
+- Log risk calculation inputs with commit SHA to defend decisions.
+
+## 9. Anti-Patterns
+
+- Overfitting weights to a single incident (avoid emotional re-weighting).
+- Ignoring normalization when new files drastically shift max values (recompute baseline).
+- Failing to document rationale for abrupt threshold changes.
+
+## 10. Change Control
+
+Every change to `risk_weights.yaml`:
+- Must include changelog entry (why).
+- Must cite metric (e.g., average false-positive rate decreased from X to Y).
+
+---
+````
+
+```python name=scripts/hotspot_merge_custom.py
+#!/usr/bin/env python3
+"""
+hotspot_merge_custom.py
+
+Extended version supporting a security hotspot dimension and non-linear scaling.
+
+Additions:
+  - Optional --security-map (JSON) mapping file->security_flag (0/1 or severity)
+  - Non-linear exponent parameters via env:
+      RISK_EXP_CHURN (default 1.0)
+      RISK_EXP_COMPLEXITY (default 1.0)
+      RISK_EXP_COVERAGE (default 1.0)
+  - Security weighting (RISK_W_SECURITY) and translation:
+      If value is HIGH/CRITICAL -> treat security_flag=1 else 0.5 if MEDIUM.
+
+Usage resembles hotspot_merge.py but with extra flag.
+
+"""
+import argparse, json, os, math
+
+def load_simple_mapping(path):
+    if not path: return {}
+    with open(path) as f:
+        return json.load(f)
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--base-hotspots", required=True, help="hotspots.json output from original script")
+    ap.add_argument("--security-map", help="JSON { file: severity } or { file: 0/1 }")
+    ap.add_argument("--out", required=True)
+    args=ap.parse_args()
+
+    with open(args.base_hotspots) as f:
+        base=json.load(f)
+
+    security=load_simple_mapping(args.security_map)
+
+    w_sec=float(os.getenv("RISK_W_SECURITY","0.10"))
+    exp_churn=float(os.getenv("RISK_EXP_CHURN","1.0"))
+    exp_complexity=float(os.getenv("RISK_EXP_COMPLEXITY","1.0"))
+    exp_coverage=float(os.getenv("RISK_EXP_COVERAGE","1.0"))
+
+    weights = base.get("meta",{}).get("weights",{})
+    # Re-normalize to incorporate security
+    total = sum(weights.values()) + w_sec
+    for k in list(weights.keys()):
+        weights[k]=weights[k]*(1-w_sec)
+    weights["security"]=w_sec
+    # Note: we preserve per-component contributions within existing risk_score for comparison.
+
+    enriched=[]
+    for h in base.get("hotspots",[]):
+        file=h["file"]
+        sec_raw=security.get(file,0)
+        # Map severity strings
+        if isinstance(sec_raw,str):
+            sev=sec_raw.upper()
+            if sev in ("CRITICAL","HIGH"): sec_flag=1
+            elif sev=="MEDIUM": sec_flag=0.5
+            else: sec_flag=0
+        else:
+            sec_flag = float(sec_raw)
+        # Extract normalized components from existing record (approx—they're weighted contributions)
+        churn_comp=h["components"]["churn"]
+        comp_comp=h["components"]["complexity"]
+        cov_comp=h["components"]["coverage_penalty"]
+        crit_comp=h["components"]["criticality_factor"]
+
+        # Reverse approximate to unweighted normalized values:
+        # orig_weight = base weights before security
+        w_churn=base["meta"]["weights"]["churn"]
+        w_complex=base["meta"]["weights"]["complexity"]
+        w_cov=base["meta"]["weights"]["coverage"]
+        w_crit=base["meta"]["weights"]["criticality"]
+
+        norm_churn = churn_comp / w_churn if w_churn else 0
+        norm_complex = comp_comp / w_complex if w_complex else 0
+        norm_cov = cov_comp / w_cov if w_cov else 0
+        norm_crit = crit_comp / w_crit if w_crit else 0
+
+        # Apply exponents
+        norm_churn_nl = norm_churn ** exp_churn
+        norm_complex_nl = norm_complex ** exp_complexity
+        norm_cov_nl = norm_cov ** exp_coverage
+
+        # Rebuild new risk
+        new_risk = (
+            norm_churn_nl * weights["churn"] +
+            norm_complex_nl * weights["complexity"] +
+            norm_cov_nl * weights["coverage"] +
+            norm_crit * weights["criticality"] +
+            sec_flag * weights["security"]
+        )
+
+        enriched.append({
+            **h,
+            "risk_score_original": h["risk_score"],
+            "risk_score_extended": round(new_risk,4),
+            "security_flag": sec_flag,
+            "weights_extended": weights,
+            "exponents": {
+                "churn": exp_churn,
+                "complexity": exp_complexity,
+                "coverage": exp_coverage
+            }
+        })
+
+    # Re-rank
+    enriched.sort(key=lambda x: x["risk_score_extended"], reverse=True)
+
+    out = {
+        "meta":{
+            "weights_extended": weights,
+            "exponents": {
+                "churn": exp_churn,
+                "complexity": exp_complexity,
+                "coverage": exp_coverage
+            }
+        },
+        "hotspots_extended": enriched
+    }
+
+    with open(args.out,"w") as f:
+        json.dump(out,f,indent=2)
+
+    print(f"[HOTSPOT-EXT] Wrote {len(enriched)} extended entries -> {args.out}")
+
+if __name__=="__main__":
+    main()
+```
+
+````markdown name=docs/security-ingestion.md
+# Security Findings Ingestion
+
+## 1. Supported Sources (Example)
+| Tool | Command | Parser |
+|------|---------|--------|
+| Trivy | `trivy fs --format json .` | parse_trivy.py |
+| Syft (sbom->vuln via Grype) | `grype sbom:sbom_combined.cyclonedx.json -o json` | (add parser) |
+| Semgrep | `semgrep --json --config p/security` | (add parser) |
+| Gitleaks | `gitleaks detect -f json` | (add parser) |
+
+## 2. Normalized Finding Fields
+| Field | Description |
+|-------|-------------|
+| id | Stable unique ID (prefixed with source) |
+| severity | HIGH/MEDIUM/LOW |
+| component | File or dependency reference |
+| desc | Short description |
+| cve/package | Optional vulnerability resolution keys |
+| recommendation | Actionable remediation text |
+
+## 3. Pipeline Position
+Run security ingestion before `risk_update.py` to ensure security-derived risks are merged.
+
+## 4. Mapping to Code Modules
+If component references a dependency rather than a direct file:
+- Attempt reverse mapping: search dependency occurrence in lockfiles.
+- For transitive dependencies, aggregate under "transitive:@pkg" classification.
+
+## 5. Severity Overrides
+If any CRITICAL severity occurs, escalate service-level summary risk regardless of numeric hotspot composite.
+
+## 6. Data Hygiene
+- Truncate descriptions > 500 chars.
+- Redact potential secrets inside description (regex for base64 > 60 chars).
+- Classify output (Internal).
+
+---
+````
+
+```python name=scripts/util_coverage_convert.py
+#!/usr/bin/env python3
+"""
+util_coverage_convert.py
+
+Convert coverage.xml (Cobertura) into a simple JSON:
+{
+  "files": {
+    "path/to/file.py": 0.83,
+    ...
+  }
+}
+
+Usage:
+  python scripts/util_coverage_convert.py coverage.xml artifacts/coverage.json
+"""
+import sys, xml.etree.ElementTree as ET, json, os
+
+def main():
+    if len(sys.argv)<3:
+        print("Usage: util_coverage_convert.py <coverage.xml> <out.json>")
+        sys.exit(1)
+    src=sys.argv[1]
+    out=sys.argv[2]
+    if not os.path.exists(src):
+        with open(out,"w") as f: f.write('{"files":{}}')
+        return
+    tree=ET.parse(src)
+    root=tree.getroot()
+    files={}
+    for cls in root.findall(".//class"):
+        fname=cls.attrib.get("filename")
+        lines=cls.findall("lines/line")
+        if not lines:
+            continue
+        hits=0; total=0
+        for ln in lines:
+            total+=1
+            if int(ln.attrib.get("hits","0"))>0:
+                hits+=1
+        cov = hits/total if total else 0
+        files[fname]=round(cov,4)
+    with open(out,"w") as f:
+        json.dump({"files":files}, f, indent=2)
+    print(f"[COVERAGE] Converted {len(files)} files -> {out}")
+
+if __name__=="__main__":
+    main()
+```
+
+````markdown name=docs/ci-usage-guide.md
+# CI Usage Guide for Analysis Stack
+
+## 1. Prerequisites
+- Scripts committed under `scripts/`
+- Config in `config/`
+- Optional: `coverage.xml` after test stage
+
+## 2. Order of Operations
+1. Checkout
+2. Build / test (generate coverage)
+3. Static metrics (complexity, churn)
+4. SBOM (gen_sbom.sh)
+5. Dependency graph extraction (custom script)
+6. Ownership analysis
+7. Security ingestion (parse_trivy.py etc.)
+8. Hotspot + extended risk scoring
+9. Consolidated risk register
+10. Artifact publication & Backstage enrichment
+
+## 3. Failure / Alert Policy
+| Condition | Action |
+|-----------|--------|
+| Drift breach | Mark job unstable (continue) + notification |
+| High severity security finding | Fail pipeline unless in allowlist |
+| Missing coverage file | Proceed with default coverage (0.5) & warn |
+| Ownership single contributor critical path | Open advisory issue |
+
+## 4. Confidentiality
+All artifacts labeled: `Classification: Internal` in metadata; avoid uploading raw code to external scanning SaaS unless approved.
+
+## 5. Local Repro
+```
+docker build -t analysis:local -f Dockerfile.analysis .
+docker run --rm -v $PWD:/workspace -w /workspace analysis:local bash -lc "bash scripts/gen_sbom.sh --out artifacts/sbom --ref $(git rev-parse HEAD)"
+```
+
+## 6. Extending Security Sources
+Add parser script following `parse_trivy.py` pattern producing normalized JSON list; add `--security` path in `risk_update.py`.
+
+## 7. Versioning
+Keep a `VERSION` file; include version hash in consolidated_risk.json meta (future enhancement).
+
+---
+````
+
+---
+
+### Next Optional Enhancements
+If you’d like, I can also supply:
+- Backstage plugin frontend schema example (React widget spec)
+- Docker Compose for local test environment
+- Automated ADR generation scaffolding
+
+Just let me know.
+
+Would you like any further extensions or a combined Makefile to streamline all steps? Let me know your next priority.
+
+---
+6
+---
+
+Below are consolidated deliverables:
+
+1. A compiled summary of unique concepts and artifacts from the thread.
+2. Backstage plugin frontend schema & React widget specs (example implementation).
+3. Docker Compose environment for local analysis stack + optional observability.
+4. Automated ADR (Architecture Decision Record) generation scaffolding (template, scripts, indexing).
+
+Feel free to prune or reorganize to match your repo structure.
+
+````markdown name=docs/summary_compiled.md
+# Compiled Summary: Architecture Reverse Engineering & Governance Stack
+
+## 1. Core Objectives
+- Map architecture (code + process) for closed source repos.
+- Quantify risk via churn, complexity, coverage gaps, criticality, security.
+- Detect architecture drift (nodes/edges changed).
+- Identify knowledge concentration.
+- Generate SBOM + security ingestion.
+- Produce consolidated risk register.
+- Feed metrics to Backstage and CI governance loops.
+- Enable safe AI summarization.
+- Provide remediation backlog with weighted formula.
+- Support compliance & IP awareness.
+
+## 2. Key Artifacts (Previously Delivered)
+| Category | Artifact Examples |
+|----------|-------------------|
+| Scripts | gen_sbom.sh, scan_drift.py, hotspot_merge.py, ownership_diff.py, risk_update.py, parse_trivy.py, util_coverage_convert.py, hotspot_merge_custom.py |
+| Config | drift_config.yaml, risk_weights.yaml |
+| Templates | Executive summary, remediation backlog, AI-safe prompts |
+| Security | Normalized Trivy parser & schema |
+| Risk Model | Linear + extended (non-linear + security dimension) |
+| Backstage | Metrics annotations strategy & service entity examples |
+| CI | GitHub Actions workflow arch-governance.yml |
+| Container | Dockerfile.analysis for reproducible environment |
+
+## 3. Data Flows
+1. Codebase → Complexity (radon) + Churn (git) + Coverage → Hotspots.
+2. Codebase → SBOM (Syft) → Security (Trivy) → Normalized findings.
+3. Dependency Graph Snapshots → Drift detection (edge churn & boundary flags).
+4. Git history → Ownership concentration analysis.
+5. All upstream reports → Risk aggregator → Consolidated JSON.
+6. Consolidated JSON + service path mapping → Backstage annotations & dashboards.
+7. ADR generation scaffolding -> Captures rationale for architecture changes/drift responses.
+
+## 4. Risk Dimensions & Scoring
+Dimensions: Churn, Complexity, Coverage Gap, Criticality, Security Hotspot (optional), Knowledge Concentration (adjusts severity), Drift (global/edge-level).
+Default Linear Weights (example): 0.4 (churn), 0.4 (complexity), 0.1 (coverage gap), 0.1 (criticality).
+Extended: optional exponentiation (non-linear) + security dimension.
+Severity Escalation Rules:
+- Security HIGH/CRITICAL → automatic HIGH.
+- Knowledge concentration > 0.8 & criticality ≥ 4 → escalate one level.
+- Boundary violation → at least MEDIUM.
+
+## 5. Governance Loop
+Nightly or scheduled:
+- Generate metrics & artifacts.
+- Evaluate thresholds (drift, vulnerabilities).
+- Open issues / update backlog / annotate Backstage.
+- Recompute risk trends (store time series) for regression detection.
+
+## 6. Compliance & IP
+- Maintain SBOM + license metadata.
+- Record decision rationale using ADR template.
+- Classify artifacts (Internal / Confidential).
+- Redact potential secrets in derivative outputs.
+
+## 7. Backstage Integration Summary
+Annotations: analysis.hotspotsScore, analysis.knowledgeConcentration, analysis.securityFindings, analysis.driftChurnRatio, analysis.lastRiskUpdate.
+Frontend plugin widgets:
+- Risk Overview (aggregated metrics).
+- Hotspots Table (top N with drill-down).
+- Knowledge Concentration Gauge.
+Sources: consolidated_risk.json + enriched service mapping.
+
+## 8. ADR Process
+Scripted creation of numbered ADR Markdown files with consistent metadata:
+- Title, Status (Proposed/Accepted/Superseded), Context, Decision, Consequences.
+Index auto-regenerated to maintain navigation.
+Supports tagging drift or security triggers and links to evidence artifacts.
+
+## 9. Extensibility Hooks
+- Add Semgrep findings ingestion (same normalized schema).
+- Add dynamic weighting per release phase via environment or config/risk_weights.yaml.
+- Add service-level SLO correlation (attach p95 latency to hotspots).
+- Deploy metrics ingestion API for multi-repo unification.
+
+## 10. Suggested Next Enhancements
+- Store historical snapshots in object storage (MinIO) to power longitudinal Backstage charts.
+- Add ADR linting (ensure each boundary violation spawns ADR or waiver).
+- Implement GraphQL API providing risk slices for UI components.
+- Use OpenTelemetry to detect runtime “untraced” edges vs static edges (observability drift).
+
+## 11. File Groups Added Now
+- Backstage Plugin (React components, types, plugin registration)
+- Docker Compose stack for local execution & observability
+- ADR automation scripts, templates, index generator
+
+## 12. Security Posture
+Assure pipeline isolation, avoid exfiltrating raw code in SBOM, restrict artifact distribution to internal consumers. AI prompts sanitized (no secrets, no large literal blocks). Provide minimal structural metadata for summarization.
+
+Footer: Compiled on {{DATE}} — Source: Conversation Assets — Classification: Internal
+````
+
+```typescript name=backstage/plugins/architecture-risk/src/types.ts
+export interface HotspotRecord {
+  file: string;
+  risk_score: number;
+  risk_score_extended?: number;
+  churn?: number;
+  avg_complexity?: number;
+  coverage?: number;
+  criticality?: number;
+  security_flag?: number;
+  components?: {
+    churn?: number;
+    complexity?: number;
+    coverage_penalty?: number;
+    criticality_factor?: number;
+  };
+}
+
+export interface OwnershipDirectory {
+  path: string;
+  total_commits: number;
+  top_concentration: number;
+  criticality?: number;
+  flag?: string; // HIGH_CONCENTRATION | SINGLE_CONTRIBUTOR
+  authors: { email: string; count: number; pct: number }[];
+}
+
+export interface DriftSummary {
+  previous_ref?: string;
+  current_ref?: string;
+  added_nodes_count: number;
+  removed_nodes_count: number;
+  added_edges_count: number;
+  removed_edges_count: number;
+  churn_ratio: number;
+  breach: boolean;
+  threshold: number;
+}
+
+export interface SecurityFinding {
+  id: string;
+  severity: string;
+  component: string;
+  desc: string;
+  recommendation?: string;
+  cve?: string;
+  package?: string;
+}
+
+export interface ConsolidatedRisk {
+  timestamp: string;
+  derived_risks: {
+    id: string;
+    type: string;
+    severity: string;
+    component?: string;
+    details?: any;
+    recommendation?: string;
+  }[];
+  sources: {
+    hotspots: boolean;
+    drift: boolean;
+    ownership: boolean;
+    security: boolean;
+  };
+}
+
+export interface ServiceMetrics {
+  service: string;
+  max_risk?: number;
+  avg_risk?: number;
+  high_risk_count?: number;
+  knowledge_concentration_pct?: number;
+  security_high_count?: number;
+  driftChurnRatio?: number;
+  last_update?: string;
+}
+
+export interface PluginConfig {
+  apiBaseUrl: string; // e.g. /api/arch-risk
+  enableSecurity: boolean;
+  enableDrift: boolean;
+}
+```
+
+```typescript name=backstage/plugins/architecture-risk/src/components/RiskOverviewWidget.tsx
+import React, { useEffect, useState } from 'react';
+import { Progress, Table, WarningPanel, InfoCard } from '@backstage/core-components';
+import { Typography, Box, Grid, Chip, Tooltip } from '@material-ui/core';
+import { ServiceMetrics } from '../types';
+
+interface Props {
+  entityName: string;
+  fetchMetrics: (service: string) => Promise<ServiceMetrics | undefined>;
+}
+
+const riskColor = (score?: number) => {
+  if (score === undefined) return 'default';
+  if (score >= 0.7) return 'secondary';
+  if (score >= 0.5) return 'primary';
+  return 'default';
+};
+
+const gaugeColor = (pct?: number) => {
+  if (pct === undefined) return 'default';
+  if (pct >= 0.8) return 'secondary';
+  if (pct >= 0.6) return 'primary';
+  return 'default';
+};
+
+export const RiskOverviewWidget: React.FC<Props> = ({ entityName, fetchMetrics }) => {
+  const [metrics, setMetrics] = useState<ServiceMetrics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchMetrics(entityName)
+      .then(m => { if (mounted) setMetrics(m || null); })
+      .catch(e => { if (mounted) setErr(e.message); })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, [entityName, fetchMetrics]);
+
+  if (loading) return <Progress />;
+  if (err) return <WarningPanel title="Risk Overview Error">{err}</WarningPanel>;
+  if (!metrics) return <InfoCard title="Risk Overview"><Typography>No metrics available.</Typography></InfoCard>;
+
+  const rows = [
+    { label: 'Max Risk', value: metrics.max_risk?.toFixed(2) ?? '—' },
+    { label: 'Avg Risk', value: metrics.avg_risk?.toFixed(2) ?? '—' },
+    { label: 'High Risk Files', value: metrics.high_risk_count ?? 0 },
+    { label: 'Security HIGH Findings', value: metrics.security_high_count ?? 0 },
+    { label: 'Drift Churn Ratio', value: metrics.driftChurnRatio?.toFixed(3) ?? '—' },
+    { label: 'Knowledge Concentration %', value: metrics.knowledge_concentration_pct !== undefined ? (metrics.knowledge_concentration_pct * 100).toFixed(1) + '%' : '—' },
+    { label: 'Last Update', value: metrics.last_update ?? '—' },
+  ];
+
+  return (
+    <InfoCard title="Architecture Risk Overview" subheader={entityName}>
+      <Grid container spacing={2}>
+        <Grid item xs={12} md={6}>
+          <Box display="flex" flexWrap="wrap" gridGap={8}>
+            <Tooltip title="Maximum file/module risk score">
+              <Chip label={`Max Risk: ${metrics.max_risk?.toFixed(2) ?? '—'}`} color={riskColor(metrics.max_risk)} />
+            </Tooltip>
+            <Tooltip title="Average risk across mapped files">
+              <Chip label={`Avg Risk: ${metrics.avg_risk?.toFixed(2) ?? '—'}`} />
+            </Tooltip>
+            <Tooltip title="High risk file/module count (>=0.70)">
+              <Chip label={`High Files: ${metrics.high_risk_count ?? 0}`} />
+            </Tooltip>
+            <Tooltip title="Knowledge concentration in last 90 days">
+              <Chip label={`Knowledge Conc: ${(metrics.knowledge_concentration_pct ?? 0) * 100}%`} color={gaugeColor(metrics.knowledge_concentration_pct)} />
+            </Tooltip>
+            <Tooltip title="Security findings (HIGH severity)">
+              <Chip label={`Sec High: ${metrics.security_high_count ?? 0}`} color={(metrics.security_high_count ?? 0) > 0 ? 'secondary' : 'default'} />
+            </Tooltip>
+            <Tooltip title="Drift edge churn ratio (architecture change velocity)">
+              <Chip label={`Drift: ${metrics.driftChurnRatio?.toFixed(3) ?? '—'}`} color={(metrics.driftChurnRatio ?? 0) >= 0.12 ? 'secondary' : 'default'} />
+            </Tooltip>
+          </Box>
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <Table
+            options={{ paging: false, search: false, toolbar: false }}
+            columns={[
+              { title: 'Metric', field: 'label' },
+              { title: 'Value', field: 'value' },
+            ]}
+            data={rows}
+          />
+        </Grid>
+      </Grid>
+    </InfoCard>
+  );
+};
+```
+
+```typescript name=backstage/plugins/architecture-risk/src/components/HotspotsTable.tsx
+import React, { useEffect, useState } from 'react';
+import { Table, Progress, WarningPanel } from '@backstage/core-components';
+import { HotspotRecord } from '../types';
+import { Box } from '@material-ui/core';
+
+interface Props {
+  service: string;
+  fetchHotspots: (service: string) => Promise<HotspotRecord[]>;
+  limit?: number;
+}
+
+export const HotspotsTable: React.FC<Props> = ({ service, fetchHotspots, limit = 15 }) => {
+  const [data, setData] = useState<HotspotRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchHotspots(service)
+      .then(h => { if (mounted) setData(h.slice(0, limit)); })
+      .catch(e => { if (mounted) setErr(e.message); })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, [service, fetchHotspots, limit]);
+
+  if (loading) return <Progress />;
+  if (err) return <WarningPanel title="Hotspots Error">{err}</WarningPanel>;
+
+  return (
+    <Box>
+      <Table
+        title={`Top Hotspots (${service})`}
+        options={{ paging: false, search: true, toolbar: true, padding: 'dense' }}
+        columns={[
+          { title: 'File', field: 'file' },
+            {
+              title: 'Risk',
+              field: 'risk_score',
+              render: r => (r.risk_score_extended ?? r.risk_score).toFixed(3),
+              customSort: (a, b) => (a.risk_score_extended ?? a.risk_score) - (b.risk_score_extended ?? b.risk_score),
+            },
+          { title: 'Churn', field: 'churn', hidden: false },
+          { title: 'Complexity', field: 'avg_complexity' },
+          { title: 'Coverage', field: 'coverage', render: r => r.coverage !== undefined ? (r.coverage * 100).toFixed(1) + '%' : '—' },
+          {
+            title: 'Security',
+            field: 'security_flag',
+            render: r => r.security_flag ? '⚠️' : '',
+          },
+        ]}
+        data={data}
+      />
+    </Box>
+  );
+};
+```
+
+```typescript name=backstage/plugins/architecture-risk/src/components/KCConcentrationGauge.tsx
+import React from 'react';
+import { InfoCard, Gauge } from '@backstage/core-components';
+
+interface Props {
+  pct: number; // 0..1
+  windowLabel?: string;
+  threshold?: number;
+}
+
+export const KCConcentrationGauge: React.FC<Props> = ({ pct, windowLabel = '90d', threshold = 0.6 }) => {
+  const percentValue = Math.min(Math.max(pct * 100, 0), 100);
+  const status = percentValue >= threshold * 100 ? 'error' : 'success';
+  return (
+    <InfoCard title="Knowledge Concentration" subheader={`Window: ${windowLabel}`}>
+      <Gauge value={percentValue} strokeWidth={12} max={100} />
+      <p style={{ marginTop: 8 }}>
+        {percentValue.toFixed(1)}% of recent commits by top contributor.<br />
+        Threshold: {(threshold * 100).toFixed(0)}% → Status: {status.toUpperCase()}
+      </p>
+    </InfoCard>
+  );
+};
+```
+
+```typescript name=backstage/plugins/architecture-risk/src/plugin.ts
+import { createPlugin, createApiFactory, discoveryApiRef, configApiRef } from '@backstage/core-plugin-api';
+import { createRouteRef } from '@backstage/core-plugin-api';
+
+export const rootRouteRef = createRouteRef({
+  id: 'architecture-risk-root',
+});
+
+export const architectureRiskPlugin = createPlugin({
+  id: 'architecture-risk',
+  routes: {
+    root: rootRouteRef,
+  },
+  apis: [
+    createApiFactory({
+      api: {
+        id: 'architecture-risk-api',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+      deps: { discoveryApi: discoveryApiRef, configApi: configApiRef },
+      factory: ({ discoveryApi }) => ({
+        async fetchServiceMetrics(service: string) {
+          const base = await discoveryApi.getBaseUrl('arch-risk');
+          const resp = await fetch(`${base}/metrics/${encodeURIComponent(service)}`);
+          if (!resp.ok) throw new Error(`Metrics fetch failed ${resp.status}`);
+          return resp.json();
+        },
+        async fetchHotspots(service: string) {
+          const base = await discoveryApi.getBaseUrl('arch-risk');
+            const resp = await fetch(`${base}/hotspots/${encodeURIComponent(service)}`);
+          if (!resp.ok) throw new Error(`Hotspots fetch failed ${resp.status}`);
+          return resp.json();
+        },
+      }),
+    }),
+  ],
+});
+```
+
+```typescript name=backstage/plugins/architecture-risk/dev/App.tsx
+import React, { useEffect, useState } from 'react';
+import { RiskOverviewWidget } from '../src/components/RiskOverviewWidget';
+import { HotspotsTable } from '../src/components/HotspotsTable';
+import { KCConcentrationGauge } from '../src/components/KCConcentrationGauge';
+import { Grid, CssBaseline, Container } from '@material-ui/core';
+import { ServiceMetrics, HotspotRecord } from '../src/types';
+
+const mockFetchMetrics = async (service: string): Promise<ServiceMetrics> => {
+  return {
+    service,
+    max_risk: 0.82,
+    avg_risk: 0.53,
+    high_risk_count: 7,
+    knowledge_concentration_pct: 0.67,
+    security_high_count: 2,
+    driftChurnRatio: 0.14,
+    last_update: new Date().toISOString(),
+  };
+};
+
+const mockFetchHotspots = async (service: string): Promise<HotspotRecord[]> => {
+  return [
+    { file: 'src/core/payment_validator.py', risk_score: 0.81, churn: 45, avg_complexity: 17.3, coverage: 0.42, criticality: 5 },
+    { file: 'src/core/ledger/reconcile.ts', risk_score: 0.74, churn: 37, avg_complexity: 14.1, coverage: 0.55, criticality: 5 },
+    { file: 'src/api/admin_routes.js', risk_score: 0.69, churn: 31, avg_complexity: 12.2, coverage: 0.33, security_flag: 1 },
+  ];
+};
+
+export const DevApp: React.FC = () => {
+  const service = 'payments-service';
+  const [metrics, setMetrics] = useState<ServiceMetrics | null>(null);
+
+  useEffect(() => {
+    mockFetchMetrics(service).then(setMetrics);
+  }, [service]);
+
+  return (
+    <>
+      <CssBaseline />
+      <Container maxWidth="lg" style={{ marginTop: 24 }}>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <RiskOverviewWidget entityName={service} fetchMetrics={mockFetchMetrics} />
+          </Grid>
+          <Grid item xs={12} md={8}>
+            <HotspotsTable service={service} fetchHotspots={mockFetchHotspots} />
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <KCConcentrationGauge pct={metrics?.knowledge_concentration_pct ?? 0} />
+          </Grid>
+        </Grid>
+      </Container>
+    </>
+  );
+};
+```
+
+```yaml name=docker-compose.analysis.yml
+version: "3.9"
+services:
+  analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile.analysis
+    container_name: analysis-pipeline
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace:rw
+      - sbom_cache:/workspace/artifacts
+    environment:
+      RISK_W_CHURN: "0.3"
+      RISK_W_COMPLEXITY: "0.35"
+      RISK_W_COVERAGE: "0.15"
+      RISK_W_CRITICALITY: "0.10"
+    command: >
+      bash -lc "
+        mkdir -p artifacts &&
+        bash scripts/gen_sbom.sh --out artifacts/sbom --ref $(git rev-parse HEAD) &&
+        radon cc -j -s src/ > artifacts/complexity.json || echo '{}' > artifacts/complexity.json &&
+        git log --since=90.days --name-only --pretty=format: | sort | grep -v '^$' | uniq -c > artifacts/churn.txt || echo '' > artifacts/churn.txt &&
+        python scripts/hotspot_merge.py --churn artifacts/churn.txt --complexity artifacts/complexity.json --out artifacts/hotspots.json &&
+        python scripts/ownership_diff.py --out artifacts/ownership.json &&
+        python scripts/scan_drift.py --current artifacts/current_graph.json --previous artifacts/previous_graph.json --out artifacts/drift_report.json || true &&
+        python scripts/risk_update.py --hotspots artifacts/hotspots.json --ownership artifacts/ownership.json --drift artifacts/drift_report.json --out artifacts/consolidated_risk.json &&
+        tail -f /dev/null
+      "
+    depends_on:
+      - minio
+      - jaeger
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-09-01T00-00-00Z
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+      - "14268:14268"
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  sbom_cache:
+  minio_data:
+  grafana_data:
+```
+
+```env name=.env.example
+# Example environment for analysis tooling
+RISK_W_CHURN=0.30
+RISK_W_COMPLEXITY=0.35
+RISK_W_COVERAGE=0.15
+RISK_W_CRITICALITY=0.10
+RISK_W_SECURITY=0.10
+RISK_EXP_CHURN=1.0
+RISK_EXP_COMPLEXITY=1.2
+RISK_EXP_COVERAGE=1.1
+DRIFT_THRESHOLD=0.12
+ANALYSIS_CLASSIFICATION=Internal
+```
+
+```bash name=scripts/adr_new.sh
+#!/usr/bin/env bash
+# adr_new.sh
+# Create a new ADR from template with incremental numbering.
+# Usage: ./scripts/adr_new.sh "Adopt Service Mesh for Internal Traffic"
+set -euo pipefail
+TITLE="${1:-}"
+if [[ -z "$TITLE" ]]; then
+  echo "Usage: $0 \"Decision Title\"" >&2
+  exit 1
+fi
+ADR_DIR="docs/adr"
+TEMPLATE="$ADR_DIR/ADR_TEMPLATE.md"
+mkdir -p "$ADR_DIR"
+# Determine next number
+NEXT_NUM=$(printf "%04d" $( (ls "$ADR_DIR" | grep -E '^[0-9]{4}-' | sed 's/-.*//' | sort -n | tail -1; echo 0000) | tail -1 | awk '{print $1+1}') )
+FILENAME="$ADR_DIR/${NEXT_NUM}-$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9\-').md"
+DATE=$(date -u +"%Y-%m-%d")
+if [[ ! -f "$TEMPLATE" ]]; then
+  echo "Template missing at $TEMPLATE" >&2
+  exit 1
+fi
+sed -e "s/{{NUMBER}}/$NEXT_NUM/g" \
+    -e "s/{{DATE}}/$DATE/g" \
+    -e "s/{{TITLE}}/$TITLE/g" \
+    "$TEMPLATE" > "$FILENAME"
+echo "Created ADR: $FILENAME"
+# Update index
+python3 scripts/adr_index.py --dir "$ADR_DIR" --out "$ADR_DIR/0000-record-architecture-decisions.md"
+```
+
+```python name=scripts/adr_index.py
+#!/usr/bin/env python3
+"""
+adr_index.py
+Generates/updates ADR index file listing all ADRs with status.
+Assumes each ADR has front-matter lines:
+Status: <status>
+Date: <date>
+Number: <number>
+
+Usage:
+  python scripts/adr_index.py --dir docs/adr --out docs/adr/0000-record-architecture-decisions.md
+"""
+import argparse, os, re, datetime
+
+HDR = """# Architecture Decision Records (Index)
+
+Generated: {ts} UTC
+
+| Number | Title | Status | Date | File |
+|--------|-------|--------|------|------|
+{rows}
+
+Legend: Status values = Proposed | Accepted | Deprecated | Superseded
+
+"""
+
+def parse_adr(path):
+    status = "UNKNOWN"
+    date = ""
+    number = ""
+    title = ""
+    with open(path) as f:
+        for line in f:
+            if line.startswith("# "):
+                title = line[2:].strip()
+            m = re.match(r"Status:\s*(.+)", line)
+            if m: status = m.group(1).strip()
+            m2 = re.match(r"Date:\s*(\d{4}-\d{2}-\d{2})", line)
+            if m2: date = m2.group(1)
+            m3 = re.match(r"Number:\s*(\d+)", line)
+            if m3: number = m3.group(1)
+            if status != "UNKNOWN" and date and number and title:
+                break
+    return number, title, status, date
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", required=True)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    rows = []
+    for fname in sorted(os.listdir(args.dir)):
+        if not re.match(r"^\d{4}-.*\.md$", fname): continue
+        if fname.endswith("record-architecture-decisions.md"): continue
+        full = os.path.join(args.dir, fname)
+        number, title, status, date = parse_adr(full)
+        rows.append(f"| {number or fname[:4]} | {title} | {status} | {date} | [{fname}]({fname}) |")
+
+    content = HDR.format(ts=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), rows="\n".join(rows))
+    with open(args.out, "w") as f:
+        f.write(content)
+    print(f"[ADR] Index written to {args.out}")
+
+if __name__ == "__main__":
+    main()
+```
+
+````markdown name=docs/adr/ADR_TEMPLATE.md
+# {{NUMBER}}. {{TITLE}}
+
+Number: {{NUMBER}}
+Date: {{DATE}}
+Status: Proposed
+Deciders: (list names/roles)
+Supersedes: (if any)
+Superseded-By: (future link)
+Tags: architecture, (add others e.g. security, performance)
+
+## Context
+Explain the motivating forces. Reference:
+- Drift flags
+- Risk findings
+- Performance metrics
+- Compliance or audit gaps
+Include constraints and non-goals.
+
+## Decision
+Explicit statement of the chosen option. Include trade-offs and scope.
+
+## Alternatives Considered
+- Option A: (summary + pros/cons + why rejected)
+- Option B:
+- Option C:
+
+## Consequences
+Positive, negative, unresolved questions.
+
+## Implementation Plan
+High-level phases, ownership, migration notes, rollback triggers.
+
+## Metrics / Validation
+How success or regression is measured (latency, risk score reduction, coverage increase).
+
+## Links
+- Related ADRs
+- Issues / tickets
+- Risk report snapshot
+- Diagrams (internal links)
+
+## Change Log
+- {{DATE}}: Proposed
+````
+
+````markdown name=docs/adr/0000-record-architecture-decisions.md
+# Architecture Decision Records (Index)
+
+(Generated placeholder. Will be auto-updated by adr_index.py after first ADR creation.)
+
+| Number | Title | Status | Date | File |
+|--------|-------|--------|------|------|
+
+Legend: Status values = Proposed | Accepted | Deprecated | Superseded
+````
+
+````markdown name=docs/adr/README.md
+# ADR Process
+
+## Purpose
+Track rationale and trade-offs behind architectural, security, and process decisions, enabling:
+- Auditable history (compliance / due diligence)
+- Faster onboarding
+- Risk reduction (explicit mitigation decisions)
+- Alignment across teams
+
+## Workflow
+1. Detect trigger (drift breach, high-risk hotspot cluster, security mandate).
+2. Run `./scripts/adr_new.sh "Decision Title"`.
+3. Fill template sections.
+4. PR review:
+   - Status: Proposed → Accepted (after approval)
+   - If replacing prior decision, add Supersedes / Superseded-By links.
+5. On implementation completion, update Consequences & Metrics with actuals.
+
+## Status Glossary
+- Proposed: Draft under discussion.
+- Accepted: Decision stands; implement.
+- Deprecated: Being phased out.
+- Superseded: Replaced by a later ADR.
+
+## Quality Checklist
+- Context references objective evidence (risk report SHA).
+- Decision unambiguously states chosen direction.
+- Alternatives list at least two meaningful options.
+- Consequences include risks & follow-up tasks.
+- Implementation plan identifies owners & rollback triggers.
+
+## Automation
+- Index maintained by `adr_index.py`.
+- CI can enforce:
+  - New boundary-violating dependency must reference ADR or create one.
+  - ADRs older than N days in Proposed → raise reminder.
+
+## Secure Handling
+ADRs may contain sensitive design details; classify repository access accordingly.
+
+---
+````
+
+```markdown name=docs/backstage-plugin-frontend-overview.md
+# Backstage Architecture Risk Plugin (Frontend Overview)
+
+## Components
+| Component | Purpose |
+|-----------|---------|
+| RiskOverviewWidget | Aggregated service risk KPIs |
+| HotspotsTable | Top risky files/modules with metrics |
+| KCConcentrationGauge | Knowledge concentration visualization |
+| DevApp | Local harness for development |
+
+## Data Contracts
+- /metrics/:service → ServiceMetrics
+- /hotspots/:service → HotspotRecord[]
+(See types.ts)
+
+## Extension Points
+- Add Graph view (dependency edges).
+- Add “ADR Required” icon for flagged boundary violations.
+- Add time-series charts (max risk over 30 days) from historical store.
+
+## Theming Notes
+Use Backstage theme palette overrides optionally for severity coloring. Provide custom color scale for risk bands (e.g., low=neutral, medium=warning, high=error).
+
+## Security Considerations
+- No raw code displayed (only file paths & aggregate numbers).
+- Ensure server filters unauthorized service metrics.
+
+---
+```
+
+```bash name=scripts/adr_lint.sh
+#!/usr/bin/env bash
+# Simple lint: ensure all ADRs have Status line and at least one H2 section.
+set -euo pipefail
+FAIL=0
+for f in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+  [[ -f "$f" ]] || continue
+  grep -q "^Status:" "$f" || { echo "[LINT] Missing Status in $f"; FAIL=1; }
+  grep -q "^## Context" "$f" || { echo "[LINT] Missing Context section in $f"; FAIL=1; }
+  grep -q "^## Decision" "$f" || { echo "[LINT] Missing Decision section in $f"; FAIL=1; }
+done
+exit $FAIL
+```
+
+```makefile name=Makefile
+# Convenience targets
+
+ANALYSIS_IMAGE=analysis:local
+
+build-analysis-image:
+\tdocker build -t $(ANALYSIS_IMAGE) -f Dockerfile.analysis .
+
+run-analysis:
+\tdocker compose -f docker-compose.analysis.yml up -d analysis
+
+stop-analysis:
+\tdocker compose -f docker-compose.analysis.yml down
+
+adr-new:
+\t./scripts/adr_new.sh "$(TITLE)"
+
+adr-index:
+\tpython3 scripts/adr_index.py --dir docs/adr --out docs/adr/0000-record-architecture-decisions.md
+
+adr-lint:
+\t./scripts/adr_lint.sh
+
+risk-refresh:
+\tdocker compose -f docker-compose.analysis.yml exec analysis bash -lc 'bash scripts/gen_sbom.sh --out artifacts/sbom --ref $$(git rev-parse HEAD); python scripts/risk_update.py --hotspots artifacts/hotspots.json --ownership artifacts/ownership.json --drift artifacts/drift_report.json --out artifacts/consolidated_risk.json'
+```
+
+---
+
+### Usage Notes
+
+1. Backstage Plugin
+   - Integrate by adding components to an entity page extension or custom plugin page.
+   - Replace `fetchMetrics` and `fetchHotspots` with calls to your internal backend plugin.
+
+2. Docker Compose
+   - Start with `docker compose -f docker-compose.analysis.yml up -d`.
+   - Extend `analysis` command to include dependency graph generation.
+
+3. ADR Workflow
+   - Create: `make adr-new TITLE="Adopt Event-Driven Billing"`
+   - Lint in CI: run `make adr-lint`.
+
+4. Security / Classification
+   - Add classification footers automatically during risk artifact generation for audit.
+
+---
+
+If you’d like:
+- Backend service (Node/Express or FastAPI) to serve metrics
+- Graph visualization component
+- Semgrep ingestion parser
+
+…just tell me and I’ll extend. Let me know your next priority.
+
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::7:::
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+
+Below are the requested additions:
+
+1. Backend service (Node/Express) to serve metrics and graph data (+ optional FastAPI variant).
+2. Graph visualization React component for the Backstage plugin.
+3. Semgrep ingestion parser and CI integration example.
+4. Supporting config, docs, and package updates.
+
+---
+
+### 1. Node/Express Backend Service (TypeScript)
+
+```json name=server/package.json
+{
+  "name": "architecture-risk-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "lint": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "fast-glob": "^3.3.2",
+    "yaml": "^2.4.5",
+    "jsonwebtoken": "^9.0.2",
+    "helmet": "^7.0.0",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/morgan": "^1.9.9",
+    "tsx": "^4.19.1",
+    "typescript": "^5.4.5",
+    "@types/node": "^20.11.30",
+    "eslint": "^9.4.0",
+    "@typescript-eslint/eslint-plugin": "^7.6.0",
+    "@typescript-eslint/parser": "^7.6.0"
+  }
+}
+```
+
+```json name=server/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "outDir": "dist",
+    "resolveJsonModule": true
+  },
+  "include": ["src"]
+}
+```
+
+```typescript name=server/src/types.ts
+export interface HotspotEntry {
+  file: string;
+  risk_score: number;
+  risk_score_extended?: number;
+  churn?: number;
+  avg_complexity?: number;
+  coverage?: number;
+  criticality?: number;
+  security_flag?: number;
+}
+
+export interface OwnershipDirectory {
+  path: string;
+  top_concentration: number;
+  flag?: string;
+  criticality?: number;
+}
+
+export interface DriftReport {
+  summary: {
+    churn_ratio: number;
+    breach: boolean;
+    threshold: number;
+    added_nodes_count: number;
+    removed_nodes_count: number;
+    added_edges_count: number;
+    removed_edges_count: number;
+  };
+  added_nodes?: string[];
+  removed_nodes?: string[];
+  added_edges?: { from: string; to: string; type?: string }[];
+  removed_edges?: { from: string; to: string; type?: string }[];
+}
+
+export interface ConsolidatedRisk {
+  timestamp: string;
+  derived_risks: {
+    id: string;
+    type: string;
+    severity: string;
+    component?: string;
+  }[];
+}
+
+export interface ServiceMetrics {
+  service: string;
+  max_risk?: number;
+  avg_risk?: number;
+  high_risk_count?: number;
+  knowledge_concentration_pct?: number;
+  security_high_count?: number;
+  driftChurnRatio?: number;
+  last_update?: string;
+}
+```
+
+```typescript name=server/src/config.ts
+import fs from 'fs';
+import path from 'path';
+import YAML from 'yaml';
+
+export interface ServicePathMap {
+  services: Record<string, { paths: string[] }>;
+}
+
+const ARTIFACT_DIR = process.env.ANALYSIS_ARTIFACT_DIR || 'artifacts';
+const SERVICE_PATHS_FILE = process.env.SERVICE_PATHS_FILE || 'config/service_paths.yaml';
+
+export function loadServicePathMap(): ServicePathMap {
+  if (!fs.existsSync(SERVICE_PATHS_FILE)) {
+    return { services: {} };
+  }
+  const raw = fs.readFileSync(SERVICE_PATHS_FILE, 'utf-8');
+  return YAML.parse(raw) as ServicePathMap;
+}
+
+export const config = {
+  artifactDir: ARTIFACT_DIR,
+  servicePathMap: loadServicePathMap(),
+  securityHighSeverities: new Set(['HIGH', 'CRITICAL'])
+};
+
+export function artifactPath(file: string) {
+  return path.join(config.artifactDir, file);
+}
+```
+
+```typescript name=server/src/fileLoaders.ts
+import fs from 'fs';
+import { artifactPath } from './config.js';
+
+export function safeReadJSON<T>(file: string, fallback: T): T {
+  try {
+    const full = artifactPath(file);
+    if (!fs.existsSync(full)) return fallback;
+    return JSON.parse(fs.readFileSync(full, 'utf-8')) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function listArtifacts() {
+  const dir = artifactPath('');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir);
+}
+```
+
+```typescript name=server/src/metrics.ts
+import { config } from './config.js';
+import { safeReadJSON } from './fileLoaders.js';
+import {
+  HotspotEntry,
+  OwnershipDirectory,
+  DriftReport,
+  ConsolidatedRisk,
+  ServiceMetrics
+} from './types.js';
+import path from 'path';
+
+interface HotspotFile {
+  hotspots?: HotspotEntry[];
+  hotspots_extended?: HotspotEntry[];
+  meta?: any;
+}
+
+interface OwnershipFile {
+  directories: OwnershipDirectory[];
+  summary?: any;
+}
+
+export function loadHotspots(): HotspotEntry[] {
+  const base = safeReadJSON<HotspotFile>('hotspots.json', { hotspots: [] });
+  if (base.hotspots_extended) return base.hotspots_extended as HotspotEntry[];
+  return base.hotspots || [];
+}
+
+export function loadOwnership(): OwnershipFile {
+  return safeReadJSON<OwnershipFile>('ownership.json', { directories: [] });
+}
+
+export function loadDrift(): DriftReport | null {
+  return safeReadJSON<DriftReport>('drift_report.json', null as unknown as DriftReport);
+}
+
+export function loadSecurity(): any[] {
+  return safeReadJSON<any[]>('security_findings.json', []);
+}
+
+export function loadConsolidated(): ConsolidatedRisk | null {
+  return safeReadJSON<ConsolidatedRisk>('consolidated_risk.json', null as unknown as ConsolidatedRisk);
+}
+
+function matchService(service: string, filePath: string): boolean {
+  const svc = config.servicePathMap.services[service];
+  if (!svc) return false;
+  return svc.paths.some(p => filePath.startsWith(p));
+}
+
+export function computeServiceMetrics(service: string): ServiceMetrics | undefined {
+  const hotspots = loadHotspots().filter(h => matchService(service, h.file));
+  if (!hotspots.length) return undefined;
+  const max = Math.max(...hotspots.map(h => h.risk_score_extended ?? h.risk_score));
+  const avg = hotspots.reduce((a, h) => a + (h.risk_score_extended ?? h.risk_score), 0) / hotspots.length;
+  const highCnt = hotspots.filter(h => (h.risk_score_extended ?? h.risk_score) >= 0.70).length;
+
+  const ownership = loadOwnership();
+  const serviceOwnership = ownership.directories
+    .filter(d => config.servicePathMap.services[service]?.paths.some(p => d.path.startsWith(p)))
+    .sort((a, b) => (b.top_concentration - a.top_concentration));
+  const knowledgePct = serviceOwnership[0]?.top_concentration;
+
+  const securityFindings = loadSecurity().filter(f => {
+    const comp = f.component || '';
+    return matchService(service, comp) || matchService(service, (f.details?.component || ''));
+  });
+  const highSec = securityFindings.filter(f => config.securityHighSeverities.has((f.severity || '').toUpperCase())).length;
+
+  const drift = loadDrift();
+  return {
+    service,
+    max_risk: max,
+    avg_risk: avg,
+    high_risk_count: highCnt,
+    knowledge_concentration_pct: knowledgePct,
+    security_high_count: highSec,
+    driftChurnRatio: drift?.summary?.churn_ratio,
+    last_update: loadConsolidated()?.timestamp
+  };
+}
+
+export function computeHotspotsForService(service: string, limit?: number): HotspotEntry[] {
+  const hs = loadHotspots().filter(h => matchService(service, h.file));
+  hs.sort((a, b) => (b.risk_score_extended ?? b.risk_score) - (a.risk_score_extended ?? a.risk_score));
+  return typeof limit === 'number' ? hs.slice(0, limit) : hs;
+}
+
+export function loadGraph(): { nodes: any[]; edges: any[] } {
+  // Provide a normalized graph; create if absent.
+  const drift = loadDrift();
+  if (!drift) return { nodes: [], edges: [] };
+
+  // Build nodes from edges
+  const nodesSet = new Set<string>();
+  const edges: any[] = [];
+  for (const e of drift.added_edges || []) {
+    nodesSet.add(e.from);
+    nodesSet.add(e.to);
+    edges.push({ id: `${e.from}->${e.to}`, source: e.from, target: e.to, type: e.type || 'import', status: 'added' });
+  }
+  for (const e of drift.removed_edges || []) {
+    nodesSet.add(e.from);
+    nodesSet.add(e.to);
+    edges.push({ id: `${e.from}->${e.to}`, source: e.from, target: e.to, type: e.type || 'import', status: 'removed' });
+  }
+  const nodes = Array.from(nodesSet).map(id => ({ id }));
+  return { nodes, edges };
+}
+
+export function filterGraphForService(service: string) {
+  const graph = loadGraph();
+  const svc = config.servicePathMap.services[service];
+  if (!svc) return { nodes: [], edges: [] };
+  const prefixes = svc.paths;
+  const serviceNodes = new Set(
+    graph.nodes
+      .filter(n => prefixes.some(p => (n.id as string).startsWith(p)))
+      .map(n => n.id)
+  );
+  const edges = graph.edges.filter(e => serviceNodes.has(e.source) || serviceNodes.has(e.target));
+  const nodes = graph.nodes.filter(n => serviceNodes.has(n.id) || edges.some(e => e.source === n.id || e.target === n.id));
+  return { nodes, edges };
+}
+
+export function listServices(): string[] {
+  return Object.keys(config.servicePathMap.services);
+}
+
+export function mapServiceForFile(file: string): string[] {
+  const matches: string[] = [];
+  for (const svc of listServices()) {
+    if (matchService(svc, file)) matches.push(svc);
+  }
+  return matches;
+}
+
+export function enrichHotspotsWithServiceTags(hotspots: HotspotEntry[]) {
+  return hotspots.map(h => ({
+    ...h,
+    services: mapServiceForFile(h.file)
+  }));
+}
+```
+
+```typescript name=server/src/routes.ts
+import { Router, Request, Response } from 'express';
+import {
+  computeServiceMetrics,
+  computeHotspotsForService,
+  loadGraph,
+  filterGraphForService,
+  listServices,
+  enrichHotspotsWithServiceTags,
+  loadHotspots
+} from './metrics.js';
+
+const router = Router();
+
+router.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+router.get('/services', (_req, res) => {
+  res.json(listServices());
+});
+
+router.get('/metrics/:service', (req, res) => {
+  const svc = req.params.service;
+  const metrics = computeServiceMetrics(svc);
+  if (!metrics) return res.status(404).json({ error: 'service not found or no hotspots' });
+  res.json(metrics);
+});
+
+router.get('/hotspots/:service', (req, res) => {
+  const svc = req.params.service;
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+  const data = computeHotspotsForService(svc, limit);
+  res.json(data);
+});
+
+router.get('/hotspots', (_req, res) => {
+  res.json(enrichHotspotsWithServiceTags(loadHotspots()));
+});
+
+router.get('/graph', (_req, res) => {
+  res.json(loadGraph());
+});
+
+router.get('/graph/:service', (req, res) => {
+  res.json(filterGraphForService(req.params.service));
+});
+
+export default router;
+```
+
+```typescript name=server/src/index.ts
+import express from 'express';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import router from './routes.js';
+
+const app = express();
+app.use(helmet());
+app.use(express.json({ limit: '1mb' }));
+app.use(morgan('tiny'));
+
+const PORT = process.env.PORT || 8085;
+
+app.use('/api', router);
+
+// Basic error handler
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Avoid leaking internals
+  console.error('[ERROR]', err);
+  res.status(500).json({ error: 'internal error' });
+});
+
+app.listen(PORT, () => {
+  console.log(`Architecture risk backend listening on :${PORT}`);
+});
+```
+
+```yaml name=config/service_paths.yaml
+services:
+  payments-service:
+    paths:
+      - "src/payments/"
+      - "src/core/payment"
+  billing-service:
+    paths:
+      - "src/billing/"
+      - "src/core/billing"
+  admin-portal:
+    paths:
+      - "src/ui/admin/"
+```
+
+````markdown name=server/README.md
+# Architecture Risk Backend (Node/Express)
+
+Purpose:
+Serve metrics and graph data derived from analysis artifacts for consumption by Backstage plugin (or other dashboards).
+
+Endpoints:
+- GET /api/health
+- GET /api/services
+- GET /api/metrics/:service
+- GET /api/hotspots/:service
+- GET /api/hotspots (all with service tags)
+- GET /api/graph (global drift graph)
+- GET /api/graph/:service (filtered subgraph)
+
+Environment:
+- ANALYSIS_ARTIFACT_DIR (default: artifacts/)
+- SERVICE_PATHS_FILE (default: config/service_paths.yaml)
+- PORT (default: 8085)
+
+Artifacts Expected:
+- hotspots.json (or hotspots_extended)
+- ownership.json
+- drift_report.json
+- security_findings.json
+- consolidated_risk.json
+
+Security:
+- Add auth (e.g. API key / JWT) before production.
+- Avoid serving raw source code.
+
+Run:
+npm install
+npm run dev
+
+Production:
+npm run build
+npm start
+
+Reverse Proxy:
+Mount behind Backstage or API Gateway at /arch-risk then plugin discovery base becomes arch-risk.
+
+FastAPI Alternative Provided Separately (see server-python/).
+````
+
+---
+
+### 2. FastAPI (Optional Alternative Backend)
+
+```txt name=server-python/requirements.txt
+fastapi==0.111.0
+uvicorn==0.30.0
+pyyaml==6.0.2
+```
+
+```python name=server-python/main.py
+from fastapi import FastAPI, HTTPException
+from pathlib import Path
+import json, os, yaml
+from typing import Dict, Any, List
+
+ART_DIR = Path(os.getenv("ANALYSIS_ARTIFACT_DIR", "artifacts"))
+SERVICE_PATHS_FILE = Path(os.getenv("SERVICE_PATHS_FILE", "config/service_paths.yaml"))
+
+app = FastAPI(title="Architecture Risk Backend (FastAPI)")
+
+def load_json(name: str, default):
+    f = ART_DIR / name
+    if not f.exists():
+        return default
+    try:
+        return json.loads(f.read_text())
+    except:
+        return default
+
+def load_service_map():
+    if SERVICE_PATHS_FILE.exists():
+        return yaml.safe_load(SERVICE_PATHS_FILE.read_text()) or {"services": {}}
+    return {"services": {}}
+
+SERVICE_MAP = load_service_map()
+
+def match_service(service: str, file: str) -> bool:
+    svc = SERVICE_MAP["services"].get(service)
+    if not svc: return False
+    return any(file.startswith(p) for p in svc.get("paths", []))
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.get("/services")
+def services():
+    return list(SERVICE_MAP.get("services", {}).keys())
+
+@app.get("/metrics/{service}")
+def metrics(service: str):
+    hotspots_file = load_json("hotspots.json", {})
+    hotspots = hotspots_file.get("hotspots_extended") or hotspots_file.get("hotspots") or []
+    svc_hs = [h for h in hotspots if match_service(service, h["file"])]
+    if not svc_hs:
+        raise HTTPException(404, "service not found or no hotspots")
+
+    max_risk = max((h.get("risk_score_extended") or h["risk_score"]) for h in svc_hs)
+    avg_risk = sum((h.get("risk_score_extended") or h["risk_score"]) for h in svc_hs)/len(svc_hs)
+    high_cnt = sum(1 for h in svc_hs if (h.get("risk_score_extended") or h["risk_score"]) >= 0.70)
+
+    ownership = load_json("ownership.json", {"directories":[]})
+    dirs = [
+        d for d in ownership["directories"]
+        if any(d["path"].startswith(p) for p in SERVICE_MAP["services"].get(service, {}).get("paths",[]))
+    ]
+    knowledge_pct = dirs[0]["top_concentration"] if dirs else None
+
+    security = load_json("security_findings.json", [])
+    high_sec = sum(1 for f in security if f.get("severity","").upper() in ("HIGH","CRITICAL") and match_service(service, f.get("component","")))
+
+    drift = load_json("drift_report.json", {}).get("summary", {})
+    consolidated = load_json("consolidated_risk.json", {})
+    return {
+        "service": service,
+        "max_risk": max_risk,
+        "avg_risk": avg_risk,
+        "high_risk_count": high_cnt,
+        "knowledge_concentration_pct": knowledge_pct,
+        "security_high_count": high_sec,
+        "driftChurnRatio": drift.get("churn_ratio"),
+        "last_update": consolidated.get("timestamp")
+    }
+
+@app.get("/hotspots/{service}")
+def hotspots(service: str, limit: int = 25):
+    hotspots_file = load_json("hotspots.json", {})
+    hotspots = hotspots_file.get("hotspots_extended") or hotspots_file.get("hotspots") or []
+    svc_hs = [h for h in hotspots if match_service(service, h["file"])]
+    svc_hs.sort(key=lambda h: h.get("risk_score_extended") or h["risk_score"], reverse=True)
+    return svc_hs[:limit]
+
+@app.get("/graph")
+def graph():
+    drift = load_json("drift_report.json", {})
+    if not drift: return {"nodes": [], "edges": []}
+    added = drift.get("added_edges", [])
+    removed = drift.get("removed_edges", [])
+    edges = [{"source": e["from"], "target": e["to"], "status":"added"} for e in added] + \
+            [{"source": e["from"], "target": e["to"], "status":"removed"} for e in removed]
+    nodes = set()
+    for e in edges:
+        nodes.add(e["source"]); nodes.add(e["target"])
+    return {
+        "nodes": [{"id": n} for n in nodes],
+        "edges": edges
+    }
+
+# Run with: uvicorn main:app --reload --port 8086
+```
+
+---
+
+### 3. Graph Visualization Component (React)
+
+```typescript name=backstage/plugins/architecture-risk/src/components/GraphView.tsx
+import React, { useEffect, useState } from 'react';
+import { Progress, WarningPanel, InfoCard } from '@backstage/core-components';
+import { ForceGraph2D } from 'react-force-graph';
+import { Box, Switch, FormControlLabel } from '@material-ui/core';
+
+interface GraphNode {
+  id: string;
+}
+
+interface GraphEdge {
+  source: string;
+  target: string;
+  status?: string; // added | removed
+  type?: string;
+}
+
+interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+interface Props {
+  service?: string;
+  fetchGraph: (service?: string) => Promise<GraphData>;
+}
+
+export const GraphView: React.FC<Props> = ({ service, fetchGraph }) => {
+  const [data, setData] = useState<GraphData>({ nodes: [], edges: [] });
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [showRemoved, setShowRemoved] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchGraph(service)
+      .then(g => { if (mounted) setData(g); })
+      .catch(e => { if (mounted) setErr(e.message); })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, [service, fetchGraph]);
+
+  if (loading) return <Progress />;
+  if (err) return <WarningPanel title="Graph Error">{err}</WarningPanel>;
+
+  const filtered = {
+    nodes: data.nodes,
+    links: data.edges.filter(e => showRemoved || e.status !== 'removed')
+  };
+
+  return (
+    <InfoCard title={`Dependency Graph ${service ? '(' + service + ')' : '(global)'}`}>
+      <Box mb={1}>
+        <FormControlLabel
+          control={<Switch checked={showRemoved} onChange={() => setShowRemoved(!showRemoved)} />}
+          label="Show Removed Edges"
+        />
+      </Box>
+      <div style={{ height: 500 }}>
+        <ForceGraph2D
+          graphData={filtered as any}
+          nodeLabel={(n: any) => n.id}
+          linkDirectionalArrowLength={4}
+          linkColor={(l: any) => l.status === 'removed' ? '#d9534f' : '#5cb85c'}
+          linkWidth={(l: any) => l.status === 'removed' ? 1 : 2}
+          nodeCanvasObject={(node, ctx, globalScale) => {
+            const label = (node as any).id;
+            const fontSize = 12 / globalScale;
+            ctx.fillStyle = '#1e88e5';
+            ctx.beginPath();
+            ctx.arc(node.x!, node.y!, 5, 0, 2 * Math.PI, false);
+            ctx.fill();
+            ctx.font = `${fontSize}px Sans-Serif`;
+            ctx.fillStyle = '#333';
+            ctx.fillText(label, node.x! + 6, node.y! + 2);
+          }}
+        />
+      </div>
+    </InfoCard>
+  );
+};
+```
+
+```json name=backstage/plugins/architecture-risk/package.json
+{
+  "name": "@internal/architecture-risk-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/plugin.ts",
+  "dependencies": {
+    "react-force-graph": "^1.49.5"
+  }
+}
+```
+
+```markdown name=backstage/plugins/architecture-risk/README.md
+# Architecture Risk Frontend Plugin
+
+Additions:
+- GraphView.tsx: Force-directed visualization of dependency (drift) graph.
+Props:
+- service (optional)
+- fetchGraph(service?) returns { nodes: [{id}], edges: [{source,target,status}] }
+
+Status Color:
+- added (green)
+- removed (red, optionally hidden)
+
+Integrate:
+import { GraphView } from './components/GraphView';
+<GraphView service="payments-service" fetchGraph={api.fetchGraph} />
+
+API Expectation:
+GET /graph or /graph/:service returns:
+{
+  "nodes":[{"id":"src/core/moduleA"}],
+  "edges":[{"source":"src/core/moduleA","target":"src/lib/util","status":"added"}]
+}
+
+Security:
+No code content displayed; only node ids (paths).
+```
+
+---
+
+### 4. Semgrep Ingestion Parser + CI Integration
+
+```python name=scripts/parse_semgrep.py
+#!/usr/bin/env python3
+"""
+parse_semgrep.py
+
+Convert Semgrep JSON output into normalized security findings list.
+Semgrep command example:
+  semgrep --json --config p/security-audit --output artifacts/semgrep_raw.json
+
+Expected Semgrep JSON top-level keys:
+{
+  "results": [
+    {
+      "check_id": "rule.id",
+      "path": "src/app/file.py",
+      "extra": {
+         "message": "...",
+         "severity": "ERROR" | "WARNING" | "INFO",
+         "metadata": { ... }
+      },
+      "start": {"line": 10}
+    }
+  ]
+}
+
+Severity Mapping:
+- ERROR -> HIGH
+- WARNING -> MEDIUM
+- INFO -> LOW
+
+Output schema aligns with parse_trivy.py:
+[
+  {
+    "id": "SEC-SEMGREP-rule.id",
+    "severity": "HIGH",
+    "component": "src/app/file.py",
+    "desc": "message (line 10)",
+    "recommendation": "See rule metadata or internal secure coding guidelines."
+  }
+]
+"""
+import json, argparse, sys
+
+MAP = {
+    "ERROR": "HIGH",
+    "WARNING": "MEDIUM",
+    "INFO": "LOW"
+}
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    try:
+        data = json.load(open(args.input))
+    except Exception as e:
+        print(f"[SEMGREP] Failed to load input: {e}", file=sys.stderr)
+        json.dump([], open(args.out,"w"))
+        return
+
+    results = data.get("results", [])
+    out = []
+    for r in results:
+        check_id = r.get("check_id","UNKNOWN")
+        path = r.get("path","UNKNOWN")
+        extra = r.get("extra", {})
+        msg = extra.get("message","")
+        sev_raw = extra.get("severity","INFO").upper()
+        sev = MAP.get(sev_raw, "LOW")
+        line = r.get("start",{}).get("line")
+        desc = f"{msg} (line {line})" if line else msg
+        out.append({
+            "id": f"SEC-SEMGREP-{check_id}",
+            "severity": sev,
+            "component": path,
+            "desc": desc[:300],
+            "recommendation": "Review Semgrep rule guidance; apply fix or suppress with justification."
+        })
+
+    with open(args.out,"w") as f:
+        json.dump(out,f,indent=2)
+    print(f"[SEMGREP] Normalized {len(out)} findings -> {args.out}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```yaml name=.github/workflows/semgrep.yml
+name: Semgrep Security Scan
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Semgrep
+        run: |
+          pip install semgrep==1.72.0
+      - name: Run Semgrep
+        run: |
+          mkdir -p artifacts
+          semgrep --config p/security-audit --json --output artifacts/semgrep_raw.json || true
+      - name: Parse Semgrep
+        run: |
+          python scripts/parse_semgrep.py --input artifacts/semgrep_raw.json --out artifacts/security_semgrep.json
+      - name: Merge Findings
+        run: |
+          # If consolidated security findings needed, append:
+          jq -s 'add' artifacts/security_findings.json artifacts/security_semgrep.json 2>/dev/null \
+            > artifacts/security_combined.json || cp artifacts/security_semgrep.json artifacts/security_combined.json
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-${{ github.run_id }}
+          path: artifacts/
+```
+
+---
+
+### 5. Documentation Updates
+
+````markdown name=docs/security-ingestion-extension.md
+# Security Ingestion Extension (Semgrep)
+
+Added:
+- parse_semgrep.py: Normalizes Semgrep findings to unified schema.
+- semgrep.yml workflow: Runs on push/PR with `p/security-audit` ruleset.
+
+Combining Findings:
+Use jq -s 'add' to merge arrays (Trivy + Semgrep) into `security_combined.json`.
+Then supply `--security security_combined.json` to risk_update.py.
+
+Deduplication (Optional):
+Identify duplicates by (component, desc substring). Extend parser or add post-merge script.
+
+Severity Alignment:
+Semgrep ERROR -> HIGH; WARNING -> MEDIUM; INFO -> LOW. Adjust mapping in parser if your policy differs.
+
+Suppression Policy:
+- Prefer Semgrep inline `# nosem` with justification comment.
+- Add metrics to track suppression growth over time.
+
+Pipeline Enforcement:
+Fail build if:
+- Any HIGH severity in changed files (diff-aware).
+- High severity count > threshold baseline (drift in security posture).
+
+---
+````
+
+---
+
+### 6. Backstage Plugin Integration Example (Graph)
+
+```typescript name=backstage/plugins/architecture-risk/src/components/index.ts
+export * from './RiskOverviewWidget';
+export * from './HotspotsTable';
+export * from './KCConcentrationGauge';
+export * from './GraphView';
+```
+
+---
+
+### 7. Optional: Update Makefile
+
+```makefile name=Makefile
+# Add backend targets
+include Makefile
+
+backend-dev:
+\tnpm --prefix server install
+\tnpm --prefix server run dev
+
+backend-build:
+\tnpm --prefix server run build
+
+backend-start:
+\tnpm --prefix server start
+
+semgrep-scan:
+\tsemgrep --config p/security-audit --json --output artifacts/semgrep_raw.json || true
+\tpython scripts/parse_semgrep.py --input artifacts/semgrep_raw.json --out artifacts/security_semgrep.json
+```
+
+---
+
+### 8. Optional: Combined Docker Compose (Add Backend)
+
+```yaml name=docker-compose.analysis.yml
+version: "3.9"
+services:
+  analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile.analysis
+    container_name: analysis-pipeline
+    working_dir: /workspace
+    environment:
+      ANALYSIS_ARTIFACT_DIR: artifacts
+    volumes:
+      - ./:/workspace:rw
+    command: >
+      bash -lc "
+        mkdir -p artifacts &&
+        bash scripts/gen_sbom.sh --out artifacts/sbom --ref $(git rev-parse HEAD) &&
+        radon cc -j -s src/ > artifacts/complexity.json || echo '{}' > artifacts/complexity.json &&
+        git log --since=90.days --name-only --pretty=format: | sort | grep -v '^$' | uniq -c > artifacts/churn.txt || echo '' > artifacts/churn.txt &&
+        python scripts/hotspot_merge.py --churn artifacts/churn.txt --complexity artifacts/complexity.json --out artifacts/hotspots.json &&
+        python scripts/ownership_diff.py --out artifacts/ownership.json &&
+        python scripts/scan_drift.py --current artifacts/current_graph.json --previous artifacts/previous_graph.json --out artifacts/drift_report.json || true &&
+        python scripts/risk_update.py --hotspots artifacts/hotspots.json --ownership artifacts/ownership.json --drift artifacts/drift_report.json --out artifacts/consolidated_risk.json &&
+        tail -f /dev/null
+      "
+
+  backend:
+    build:
+      context: server
+    image: arch-risk-backend:latest
+    environment:
+      ANALYSIS_ARTIFACT_DIR: /data/artifacts
+      SERVICE_PATHS_FILE: /workspace/config/service_paths.yaml
+      PORT: 8085
+    volumes:
+      - ./:/workspace:ro
+      - ./artifacts:/data/artifacts:ro
+    ports:
+      - "8085:8085"
+    command: ["node","dist/index.js"]
+    depends_on:
+      - analysis
+
+volumes: {}
+```
+
+---
+
+### 9. FastAPI Dockerfile (If Using Python Backend)
+
+```dockerfile name=server-python/Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY main.py .
+ENV ANALYSIS_ARTIFACT_DIR=/data/artifacts
+VOLUME ["/data/artifacts"]
+EXPOSE 8086
+CMD ["uvicorn","main:app","--host","0.0.0.0","--port","8086"]
+```
+
+---
+
+### 10. Next Possible Enhancements (Ask if Needed)
+- Diff-aware risk (only changed files).
+- Time-series persistence service.
+- ADR enforcement hook (reject new boundary edges without ADR reference).
+- Graph cycle detection endpoint.
+
+Let me know if you’d like any of the above; I can generate them next.
+
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::8:::
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+--- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+
+Below are the requested enhancements with full implementation artifacts:
+
+- Diff‑aware risk (only changed files)
+- Time‑series persistence service
+- ADR enforcement hook (boundary edge → ADR reference)
+- Graph cycle detection endpoint
+
+---
+
+### New / Updated Scripts
+
+```bash name=scripts/diff_changed_files.sh
+#!/usr/bin/env bash
+# diff_changed_files.sh
+# Produces a newline-delimited list of changed files between two git refs.
+# Usage:
+#   scripts/diff_changed_files.sh <base_ref> <head_ref> > artifacts/changed_files.txt
+# If head_ref omitted, defaults to HEAD.
+set -euo pipefail
+BASE="${1:-origin/main}"
+HEAD="${2:-HEAD}"
+git fetch --quiet --all || true
+git diff --name-only "$BASE" "$HEAD" | grep -E '\.(js|ts|tsx|py|go|rb|java|kt|cs)$' || true
+```
+
+```python name=scripts/diff_risk.py
+#!/usr/bin/env python3
+"""
+diff_risk.py
+Filters existing hotspot report down to only changed files (diff-aware risk lens).
+
+Inputs:
+  --hotspots artifacts/hotspots.json
+  --changed artifacts/changed_files.txt
+  --out artifacts/diff_hotspots.json
+  --min-score 0.0 (optional minimum risk score threshold post-filter)
+
+Output:
+  {
+    "meta": {...},
+    "diff_hotspots": [ ... ],
+    "summary": {
+       "changed_file_count": N,
+       "hotspots_in_changed": M,
+       "high_risk_in_changed": K
+    }
+  }
+
+Intended CI Usage:
+  1. Generate hotspots.json (regular pipeline).
+  2. Generate changed_files.txt via diff_changed_files.sh (PR context).
+  3. Run this script; focus reviewers on 'diff_hotspots'.
+
+Exit Code:
+  0 always (let later steps decide gating).
+"""
+import json, argparse, sys, pathlib
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hotspots", required=True)
+    ap.add_argument("--changed", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--min-score", type=float, default=0.0)
+    args = ap.parse_args()
+
+    hotspots = json.load(open(args.hotspots))
+    hs = hotspots.get("hotspots_extended") or hotspots.get("hotspots") or []
+
+    changed_files = {l.strip() for l in open(args.changed).read().splitlines() if l.strip()}
+
+    diff_list = []
+    for h in hs:
+        score = h.get("risk_score_extended", h.get("risk_score", 0))
+        if h["file"] in changed_files and score >= args.min_score:
+            diff_list.append(h)
+
+    out = {
+        "meta": {
+            "base_meta": hotspots.get("meta", {}),
+            "min_score": args.min_score
+        },
+        "diff_hotspots": diff_list,
+        "summary": {
+            "changed_file_count": len(changed_files),
+            "hotspots_in_changed": len(diff_list),
+            "high_risk_in_changed": sum(1 for x in diff_list if (x.get("risk_score_extended", x.get("risk_score", 0)) >= 0.70))
+        }
+    }
+    json.dump(out, open(args.out, "w"), indent=2)
+    print(f"[DIFF-RISK] {len(diff_list)} hotspot files (of {len(changed_files)} changed) -> {args.out}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```python name=scripts/record_timeseries.py
+#!/usr/bin/env python3
+"""
+record_timeseries.py
+Appends current snapshot metrics to per-service time-series JSONL files.
+
+Expect service metrics endpoint OR local metric assembly from artifacts.
+
+Modes:
+  1) Local assembly (default): read hotspots.json + ownership.json + drift_report.json + security_findings.json
+  2) API pull: --api-base http://localhost:8085/api (per service)
+
+Inputs:
+  --services config/service_paths.yaml (or derive keys)
+  --out-dir artifacts/timeseries
+  --api-base (optional)
+"""
+import argparse, json, os, time, yaml, pathlib
+
+ART_DIR = os.getenv("ANALYSIS_ARTIFACT_DIR", "artifacts")
+
+def load_json(name, default):
+    p = pathlib.Path(ART_DIR) / name
+    if not p.exists():
+        return default
+    try:
+        return json.loads(p.read_text())
+    except:
+        return default
+
+def local_metrics_for(service, service_map):
+    hotspots_raw = load_json("hotspots.json", {})
+    hotspots = hotspots_raw.get("hotspots_extended") or hotspots_raw.get("hotspots") or []
+    service_paths = service_map["services"][service]["paths"]
+    svc_hotspots = [h for h in hotspots if any(h["file"].startswith(pref) for pref in service_paths)]
+    if not svc_hotspots:
+        return None
+    max_risk = max((h.get("risk_score_extended") or h.get("risk_score",0)) for h in svc_hotspots)
+    avg_risk = sum((h.get("risk_score_extended") or h.get("risk_score",0)) for h in svc_hotspots)/len(svc_hotspots)
+    high_cnt = sum(1 for h in svc_hotspots if (h.get("risk_score_extended", h.get("risk_score",0)) >= 0.70))
+    ownership = load_json("ownership.json", {"directories":[]})
+    dirs = [d for d in ownership["directories"] if any(d["path"].startswith(pref) for pref in service_paths)]
+    knowledge = dirs[0]["top_concentration"] if dirs else None
+    security = load_json("security_findings.json", [])
+    sec_high = sum(1 for f in security if f.get("severity","").upper() in ("HIGH","CRITICAL") and any(f.get("component","").startswith(pref) for pref in service_paths))
+    drift = load_json("drift_report.json", {}).get("summary", {})
+    consolidated = load_json("consolidated_risk.json", {})
+    return {
+        "timestamp": consolidated.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "service": service,
+        "max_risk": max_risk,
+        "avg_risk": avg_risk,
+        "high_risk_count": high_cnt,
+        "knowledge_concentration_pct": knowledge,
+        "security_high_count": sec_high,
+        "driftChurnRatio": drift.get("churn_ratio"),
+        "source_ref": drift.get("current_ref"),
+    }
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--services", default="config/service_paths.yaml")
+    ap.add_argument("--out-dir", default="artifacts/timeseries")
+    ap.add_argument("--api-base")
+    args = ap.parse_args()
+
+    service_map = yaml.safe_load(open(args.services)) if os.path.exists(args.services) else {"services":{}}
+    services = list(service_map.get("services", {}).keys())
+    if not services:
+        print("[TS] No services defined; exit.")
+        return
+
+    out_dir = pathlib.Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for svc in services:
+        if args.api_base:
+            # Future extension: pull from backend API
+            print(f"[TS] API mode not implemented; using local for {svc}")
+        metrics = local_metrics_for(svc, service_map)
+        if not metrics:
+            print(f"[TS] No metrics for {svc}; skipping")
+            continue
+        fpath = out_dir / f"{svc}.jsonl"
+        with fpath.open("a") as fw:
+            fw.write(json.dumps(metrics)+"\n")
+        print(f"[TS] Appended metrics for {svc} -> {fpath}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```python name=scripts/adr_enforce_boundary.py
+#!/usr/bin/env python3
+"""
+adr_enforce_boundary.py
+Ensures each new boundary-violating dependency has a referenced ADR.
+
+Inputs:
+  --drift artifacts/drift_report.json
+  --adr-index docs/adr/0000-record-architecture-decisions.md
+  --config config/adr_enforcement.yaml
+Exit Codes:
+  0 = pass
+  3 = violations without ADR references
+Config (YAML):
+approved_patterns:
+  - src/experimental/
+allowed_temp:
+  - from: src/core/alpha
+    to: src/core/beta
+    expires: 2025-12-31
+"""
+import argparse, json, re, yaml, sys, datetime
+
+def load_yaml(p):
+    return yaml.safe_load(open(p)) if p and p.endswith(('.yml','.yaml')) else {}
+
+def parse_adr_index(path):
+    if not path: return {}
+    content = open(path).read().splitlines()
+    # Expect table rows like: | 0001 | Title | Status | Date | [file](file) |
+    adrs = {}
+    for line in content:
+        if line.startswith("|"):
+            cols = [c.strip() for c in line.strip("|").split("|")]
+            if len(cols) >= 5 and re.match(r"^\d{4}$", cols[0]):
+                num = cols[0]
+                title = cols[1]
+                status = cols[2]
+                adrs[num] = {"title": title, "status": status}
+    return adrs
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--drift", required=True)
+    ap.add_argument("--adr-index", required=True)
+    ap.add_argument("--config", required=True)
+    args = ap.parse_args()
+
+    drift = json.load(open(args.drift))
+    flags = drift.get("core_boundary_flags", [])
+    if not flags:
+        print("[ADR-ENF] No boundary flags; pass.")
+        return
+
+    cfg = load_yaml(args.config) or {}
+    approved_patterns = cfg.get("approved_patterns", [])
+    temp_allows = cfg.get("allowed_temp", [])
+    adrs = parse_adr_index(args.adr_index)
+
+    # Build ADR ref pattern (ADR number expression)
+    adr_numbers = set(adrs.keys())
+    # Heuristic: boundary justification appears in flagged edge comment file naming (not implemented)
+    violations = []
+    today = datetime.date.today()
+
+    for flag in flags:
+        f = flag["from"]; t = flag["to"]
+        pair = f"{f}->{t}"
+        # Skip approved patterns
+        if any(re.search(pat, f) or re.search(pat, t) for pat in approved_patterns):
+            continue
+        # Temporary allowances
+        temp_ok = False
+        for allow in temp_allows:
+            if allow.get("from") in f and allow.get("to") in t:
+                exp = allow.get("expires")
+                if exp:
+                    try:
+                        if today <= datetime.date.fromisoformat(exp):
+                            temp_ok = True
+                    except:
+                        pass
+        if temp_ok:
+            continue
+        # Look for ADR reference in optional map (future). For now require at least one Accepted ADR with keyword from->to substring.
+        adr_hit = False
+        for num, meta in adrs.items():
+            if meta["status"].lower().startswith("accepted"):
+                # naive linking: if either module path substring in title
+                title_l = meta["title"].lower()
+                if f.split("/")[-1].lower() in title_l and t.split("/")[-1].lower() in title_l:
+                    adr_hit = True
+                    break
+        if not adr_hit:
+            violations.append(pair)
+
+    if violations:
+        print("[ADR-ENF] Missing ADR references for boundary edges:")
+        for v in violations:
+            print("  -", v)
+        print("FAIL: Add ADR or configure exception in config/adr_enforcement.yaml")
+        sys.exit(3)
+    else:
+        print("[ADR-ENF] All boundary edges justified by existing ADRs or exemptions.")
+
+if __name__ == "__main__":
+    main()
+```
+
+```yaml name=config/adr_enforcement.yaml
+approved_patterns:
+  - "^src/experimental/"
+allowed_temp:
+  - from: "src/core/legacy"
+    to: "src/core/refactor"
+    expires: "2025-12-31"
+```
+
+---
+
+### Backend Enhancements (Node/Express)
+
+```typescript name=server/src/cycles.ts
+// cycles.ts - detect simple cycles in a directed graph (edges from drift snapshot).
+// Uses DFS with path stack; not optimized for extremely large graphs but fine for typical module graphs.
+export interface Edge {
+  source: string;
+  target: string;
+  status?: string;
+  type?: string;
+}
+
+export interface Graph {
+  nodes: { id: string }[];
+  edges: Edge[];
+}
+
+interface CycleResult {
+  cycle: string[];
+  length: number;
+}
+
+export function detectCycles(graph: Graph, maxCycles = 50, maxDepth = 50): CycleResult[] {
+  const adj = new Map<string, string[]>();
+  graph.edges.forEach(e => {
+    if (!adj.has(e.source)) adj.set(e.source, []);
+    adj.get(e.source)!.push(e.target);
+  });
+  const visited = new Set<string>();
+  const stack: string[] = [];
+  const onPath = new Set<string>();
+  const cycles: CycleResult[] = [];
+
+  function dfs(node: string, depth: number) {
+    if (cycles.length >= maxCycles) return;
+    if (depth > maxDepth) return;
+    visited.add(node);
+    onPath.add(node);
+    stack.push(node);
+    const nbrs = adj.get(node) || [];
+    for (const nb of nbrs) {
+      if (onPath.has(nb)) {
+        // Found cycle
+        const idx = stack.indexOf(nb);
+        if (idx >= 0) {
+          const cyc = stack.slice(idx);
+          // Avoid duplicates (canonical by rotation)
+          const canonical = canonicalize(cyc);
+          if (!cycles.some(c => canonicalize(c.cycle).join("->") === canonical.join("->"))) {
+            cycles.push({ cycle: cyc.slice(), length: cyc.length });
+          }
+        }
+      } else if (!visited.has(nb)) {
+        dfs(nb, depth + 1);
+      }
+      if (cycles.length >= maxCycles) break;
+    }
+    stack.pop();
+    onPath.delete(node);
+  }
+
+  function canonicalize(cyc: string[]): string[] {
+    // rotate to smallest lexicographic start for comparison
+    let best = cyc;
+    for (let i=1;i<cyc.length;i++){
+      const rotated = cyc.slice(i).concat(cyc.slice(0,i));
+      if (rotated.join("::") < best.join("::")) best = rotated;
+    }
+    return best;
+  }
+
+  for (const n of graph.nodes.map(x => x.id)) {
+    if (!visited.has(n)) dfs(n, 0);
+    if (cycles.length >= maxCycles) break;
+  }
+  return cycles;
+}
+```
+
+```typescript name=server/src/timeseries.ts
+import fs from 'fs';
+import path from 'path';
+import { computeServiceMetrics, listServices } from './metrics.js';
+
+const TS_DIR = process.env.TIMESERIES_DIR || 'artifacts/timeseries';
+
+interface TimeseriesPoint {
+  timestamp: string;
+  service: string;
+  max_risk?: number;
+  avg_risk?: number;
+  high_risk_count?: number;
+  knowledge_concentration_pct?: number;
+  security_high_count?: number;
+  driftChurnRatio?: number;
+  source_ref?: string;
+}
+
+export function appendTimeseriesSnapshot() {
+  if (!fs.existsSync(TS_DIR)) fs.mkdirSync(TS_DIR, { recursive: true });
+  for (const svc of listServices()) {
+    const m = computeServiceMetrics(svc);
+    if (!m) continue;
+    const point: TimeseriesPoint = {
+      timestamp: new Date().toISOString(),
+      service: svc,
+      max_risk: m.max_risk,
+      avg_risk: m.avg_risk,
+      high_risk_count: m.high_risk_count,
+      knowledge_concentration_pct: m.knowledge_concentration_pct,
+      security_high_count: m.security_high_count,
+      driftChurnRatio: m.driftChurnRatio
+    };
+    const fp = path.join(TS_DIR, `${svc}.jsonl`);
+    fs.appendFileSync(fp, JSON.stringify(point) + "\n");
+  }
+}
+
+export function readTimeseries(service: string, limit = 100): TimeseriesPoint[] {
+  const fp = path.join(TS_DIR, `${service}.jsonl`);
+  if (!fs.existsSync(fp)) return [];
+  const lines = fs.readFileSync(fp, 'utf-8').trim().split(/\n+/);
+  const parsed = lines.map(l => {
+    try { return JSON.parse(l); } catch { return null; }
+  }).filter(Boolean) as TimeseriesPoint[];
+  return parsed.slice(-limit);
+}
+```
+
+```typescript name=server/src/routes.ts
+import { Router } from 'express';
+import {
+  computeServiceMetrics,
+  computeHotspotsForService,
+  loadGraph,
+  filterGraphForService,
+  listServices,
+  enrichHotspotsWithServiceTags,
+  loadHotspots
+} from './metrics.js';
+import { detectCycles } from './cycles.js';
+import { appendTimeseriesSnapshot, readTimeseries } from './timeseries.js';
+
+const router = Router();
+
+// Health
+router.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+
+// Services
+router.get('/services', (_req, res) => res.json(listServices()));
+
+// Metrics per service
+router.get('/metrics/:service', (req, res) => {
+  const metrics = computeServiceMetrics(req.params.service);
+  if (!metrics) return res.status(404).json({ error: 'service not found or no hotspots' });
+  res.json(metrics);
+});
+
+// Hotspots for service
+router.get('/hotspots/:service', (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+  res.json(computeHotspotsForService(req.params.service, limit));
+});
+
+// All hotspots annotated with services
+router.get('/hotspots', (_req, res) => res.json(enrichHotspotsWithServiceTags(loadHotspots())));
+
+// Global graph (drift-based)
+router.get('/graph', (_req, res) => res.json(loadGraph()));
+
+// Service subgraph
+router.get('/graph/:service', (req, res) => res.json(filterGraphForService(req.params.service)));
+
+// Cycle detection (global)
+router.get('/graph-cycles', (_req, res) => {
+  const g = loadGraph();
+  const cycles = detectCycles({ nodes: g.nodes, edges: g.edges });
+  res.json({ count: cycles.length, cycles });
+});
+
+// Cycle detection (per service)
+router.get('/graph-cycles/:service', (req, res) => {
+  const g = filterGraphForService(req.params.service);
+  const cycles = detectCycles({ nodes: g.nodes, edges: g.edges });
+  res.json({ service: req.params.service, count: cycles.length, cycles });
+});
+
+// Time-series: append snapshot (should be auth-protected)
+router.post('/timeseries/snapshot', (_req, res) => {
+  appendTimeseriesSnapshot();
+  res.json({ ok: true });
+});
+
+// Time-series fetch
+router.get('/timeseries/:service', (req, res) => {
+  const limit = req.query.limit ? Number(req.query.limit) : 100;
+  res.json(readTimeseries(req.params.service, limit));
+});
+
+export default router;
+```
+
+---
+
+### New Backend Documentation
+
+````markdown name=docs/time-series-metrics.md
+# Time-Series Metrics Persistence
+
+## Purpose
+Store rolling historical snapshots of per-service risk metrics to enable:
+- Trend visualization (Backstage charts)
+- Regression detection (spikes in risk or drift)
+- SLO correlation (future extension)
+
+## Data Format (JSON Lines per service)
+
+File: artifacts/timeseries/<service>.jsonl  
+Each line:
+```
+{
+  "timestamp": "2025-10-03T07:15:00Z",
+  "service": "payments-service",
+  "max_risk": 0.81,
+  "avg_risk": 0.53,
+  "high_risk_count": 7,
+  "knowledge_concentration_pct": 0.67,
+  "security_high_count": 2,
+  "driftChurnRatio": 0.14
+}
+```
+
+## Generation
+- Pipeline step calls:
+  python scripts/record_timeseries.py --services config/service_paths.yaml --out-dir artifacts/timeseries
+- Or backend route (POST /api/timeseries/snapshot)
+
+## Retention Strategy
+- Keep last 90 days locally.
+- Optionally offload to object storage (MinIO / S3).
+- Apply size cap (rotate file if > N lines).
+
+## Visualization
+- Backstage plugin can add a line chart (avg_risk vs timestamp).
+- Identify anomaly thresholds (e.g., >20% week-over-week increase).
+
+## Governance
+- Only snapshot after full analysis pass.
+- Include commit SHA in future extension for cross-reference.
+
+````
+
+````markdown name=docs/diff-aware-risk.md
+# Diff-Aware Risk
+
+## Goal
+Focus reviewer attention on risky files actually touched in a PR or short diff window rather than entire hotspot list.
+
+## Workflow
+1. Compute base hotspots via normal pipeline (main branch).
+2. In PR workflow:
+   - Collect changed files:
+     scripts/diff_changed_files.sh origin/main HEAD > artifacts/changed_files.txt
+   - Filter hotspots:
+     python scripts/diff_risk.py --hotspots artifacts/hotspots.json --changed artifacts/changed_files.txt --out artifacts/diff_hotspots.json
+3. Surface diff_hotspots.json in PR summary comment.
+
+## Output Example
+```
+{
+  "summary": {
+    "changed_file_count": 13,
+    "hotspots_in_changed": 3,
+    "high_risk_in_changed": 1
+  },
+  "diff_hotspots": [
+    { "file": "src/core/payment_validator.py", "risk_score": 0.81, ... }
+  ]
+}
+```
+
+## Gating Policy (Optional)
+- If high_risk_in_changed > 0 AND no test changes in diff → request additional review.
+- Score threshold adjustable via --min-score.
+
+## Benefits
+- Reduces noise: reviewers focus on modules with systemic risk.
+- Encourages pre-emptive refactors by making persistent hotspots more visible in PR context.
+
+````
+
+````markdown name=docs/adr-enforcement.md
+# ADR Enforcement for Boundary Violations
+
+## Problem
+Architecture drift introduces new dependencies crossing domains/bounded contexts. Without recorded decisions (ADRs), erosion accumulates.
+
+## Mechanism
+1. Drift detection identifies core_boundary_flags (new edges into nodes that previously had zero in-degree).
+2. Script `adr_enforce_boundary.py` verifies each flagged edge is:
+   - Covered by an Accepted ADR (title contains both module tokens), or
+   - Matches approved_patterns, or
+   - Temporarily allowed (allowed_temp with future expiry).
+
+## Config
+See config/adr_enforcement.yaml:
+```
+approved_patterns:
+  - "^src/experimental/"
+allowed_temp:
+  - from: "src/core/legacy"
+    to: "src/core/refactor"
+    expires: "2025-12-31"
+```
+
+## CI Integration
+Add step after drift detection:
+```
+python scripts/adr_enforce_boundary.py \
+  --drift artifacts/drift_report.json \
+  --adr-index docs/adr/0000-record-architecture-decisions.md \
+  --config config/adr_enforcement.yaml
+```
+
+If exit code 3: fail job or open a blocking issue.
+
+## Future Enhancements
+- Parse ADR front matter for explicit 'Edges:' section.
+- Auto-generate placeholder ADR if missing with proposed status.
+
+````
+
+````markdown name=docs/graph-cycles.md
+# Graph Cycle Detection
+
+## Purpose
+Identify dependency cycles that increase coupling, hinder modular extraction, and complicate load/initialization.
+
+## Endpoint
+- Global: GET /api/graph-cycles
+- Service-specific: GET /api/graph-cycles/:service
+
+Response:
+```
+{
+  "count": 2,
+  "cycles": [
+    { "cycle": ["src/core/a","src/core/b","src/core/a"], "length": 3 },
+    { "cycle": ["src/lib/x","src/lib/y","src/lib/z","src/lib/x"], "length": 4 }
+  ]
+}
+```
+
+## Algorithm
+- DFS stack with onPath set; capture back edges.
+- Deduplicate cycles via canonical rotation normalization.
+- Limits: maxCycles=50, maxDepth=50 (configurable by editing cycles.ts).
+
+## Remediation Strategy
+1. Select minimal edge removal (feedback edge set heuristic).
+2. Introduce interface/abstraction in one node.
+3. For large cycles (length > 5): partition by domain responsibility.
+
+## CI Policy (Optional)
+Fail if:
+- Any cycle length > 6
+- Total cycle count increases vs previous snapshot
+
+## Visualization
+Extend GraphView to highlight cycle edges (future).
+
+````
+
+---
+
+### Workflow Additions (Diff-Aware, ADR Enforcement, Time-Series)
+
+```yaml name=.github/workflows/arch-governance.yml
+# (Additions only – integrate into existing workflow)
+# Insert after "Drift Detection" and before "Ownership Diff"
+
+      - name: Diff Changed Files (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          scripts/diff_changed_files.sh origin/${{ github.base_ref || 'main' }} HEAD > artifacts/changed_files.txt
+          python scripts/diff_risk.py --hotspots artifacts/hotspots.json --changed artifacts/changed_files.txt --out artifacts/diff_hotspots.json
+
+      - name: ADR Enforcement
+        run: |
+          python scripts/adr_enforce_boundary.py \
+            --drift artifacts/drift_report.json \
+            --adr-index docs/adr/0000-record-architecture-decisions.md \
+            --config config/adr_enforcement.yaml || echo "ADR enforcement returned $?"
+
+      - name: Record Time-Series
+        run: |
+          python scripts/record_timeseries.py --services config/service_paths.yaml --out-dir artifacts/timeseries
+```
+
+---
+
+### Backstage Plugin Enhancement (Optional cycle overlay hints)
+
+```typescript name=backstage/plugins/architecture-risk/src/components/GraphCyclesBadge.tsx
+import React from 'react';
+import { InfoCard } from '@backstage/core-components';
+
+interface Props {
+  cycleCount: number;
+  largestCycle?: number;
+}
+
+export const GraphCyclesBadge: React.FC<Props> = ({ cycleCount, largestCycle }) => {
+  return (
+    <InfoCard title="Dependency Cycles">
+      <p>Cycles detected: {cycleCount}</p>
+      <p>Largest cycle length: {largestCycle ?? '—'}</p>
+      <p>{cycleCount > 0 ? 'Consider refactoring to break cycles.' : 'No cycles detected.'}</p>
+    </InfoCard>
+  );
+};
+```
+
+---
+
+### Makefile Additions
+
+```makefile name=Makefile
+diff-risk:
+\tbash scripts/diff_changed_files.sh origin/main HEAD > artifacts/changed_files.txt
+\tpython scripts/diff_risk.py --hotspots artifacts/hotspots.json --changed artifacts/changed_files.txt --out artifacts/diff_hotspots.json
+
+timeseries:
+\tpython scripts/record_timeseries.py --services config/service_paths.yaml --out-dir artifacts/timeseries
+
+adr-enforce:
+\tpython scripts/adr_enforce_boundary.py --drift artifacts/drift_report.json --adr-index docs/adr/0000-record-architecture-decisions.md --config config/adr_enforcement.yaml
+
+cycles:
+\tcurl -s http://localhost:8085/api/graph-cycles | jq '.'
+```
+
+---
+
+### Summary of Added Capabilities
+
+| Feature | Artifacts | Key Entry Points |
+|---------|-----------|------------------|
+| Diff-Aware Risk | diff_changed_files.sh, diff_risk.py, docs/diff-aware-risk.md | PR workflow step |
+| Time-Series Persistence | record_timeseries.py, timeseries.ts, docs/time-series-metrics.md | /api/timeseries/* endpoints |
+| ADR Enforcement | adr_enforce_boundary.py, adr_enforcement.yaml, docs/adr-enforcement.md | CI gating post-drift |
+| Cycle Detection | cycles.ts, routes.ts additions, docs/graph-cycles.md | /api/graph-cycles endpoints |
+
+---
+
+### Next Possible Enhancements (Optional)
+
+- Anomaly detection (Z-score) on time-series metrics
+- Cycle severity scoring (weight by node centrality)
+- Automatic ADR draft creation for missing boundary justifications
+- Incremental graph storage (hash comparisons per snapshot)
+
+Let me know if you’d like any of those or integration examples with a visualization chart for time-series trends. Would you like me to add a time-series chart React component next?
