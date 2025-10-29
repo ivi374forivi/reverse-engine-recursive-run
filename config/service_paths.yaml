@@ -1,0 +1,14 @@
+services:
+  payments-service:
+    paths:
+      - "src/payments/"
+      - "src/core/payment"
+  
+  billing-service:
+    paths:
+      - "src/billing/"
+      - "src/core/billing"
+  
+  admin-portal:
+    paths:
+      - "src/ui/admin/"

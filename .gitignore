@@ -1,0 +1,43 @@
+# Build artifacts and dependencies
+node_modules/
+dist/
+build/
+*.pyc
+__pycache__/
+.venv/
+.venv-sbom/
+*.egg-info/
+
+# Analysis outputs
+artifacts/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+/tmp/
+
+# Secrets
+.env
+*.key
+*.pem
+
+# Coverage reports
+.coverage
+coverage.xml
+htmlcov/
+
+# Package manager locks (consider committing these for reproducibility)
+# Uncomment to ignore:
+# package-lock.json
+# yarn.lock
+# poetry.lock

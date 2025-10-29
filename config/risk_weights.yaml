@@ -1,0 +1,31 @@
+# Custom Risk Weight Configuration
+# Used to override default weights in hotspot_merge.py or risk_update pipeline.
+
+version: 1
+last_updated: 2025-10-29T00:00:00Z
+
+weights:
+  churn: 0.30
+  complexity: 0.35
+  coverage_gap: 0.15
+  criticality: 0.10
+  security_hotspot: 0.10  # Additional dimension (optional extension)
+
+thresholds:
+  hotspot_high: 0.70
+  hotspot_medium: 0.50
+  ownership_concentration: 0.60
+  drift_churn_high: 0.30
+  drift_churn_medium: 0.12
+
+severity_overrides:
+  security_CRITICAL: HIGH
+  security_HIGH: HIGH
+  security_MEDIUM: MEDIUM
+  security_LOW: LOW
+
+scoring_notes: |
+  Adjust churn vs complexity emphasis based on stability goal:
+  - Increase complexity weight for refactoring phase.
+  - Increase churn weight pre-release freeze to target volatile modules.
+  coverage_gap: "1 - coverage (0..1)"
