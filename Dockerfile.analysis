@@ -1,0 +1,44 @@
+# Docker image for architecture & risk analysis pipeline
+# Focus: reproducible environment to run scripts (SBOM, drift, hotspots, ownership, security ingestion)
+# Base: slim Debian + multiple runtimes
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+
+ARG NODE_VERSION=20.11.1
+ARG GO_VERSION=1.22.4
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/opt/go/bin:/workspace/.local/bin:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git jq build-essential python3 python3-venv python3-pip \
+    graphviz ca-certificates unzip gnupg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get update && apt-get install -y nodejs && npm -v && node -v
+
+# Install Go
+RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz -o /tmp/go.tgz && \
+    tar -C /opt -xzf /tmp/go.tgz && ln -s /opt/go/bin/go /usr/local/bin/go && go version
+
+# Python tooling (radon etc.)
+RUN pip install --no-cache-dir radon==6.0.1 pipdeptree==2.23.1 cyclonedx-bom==4.3.5 pyyaml==6.0.2
+
+# Create working directory
+WORKDIR /workspace
+
+# Copy scripts (adjust path if you stage them first)
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+RUN chmod +x scripts/*.sh || true
+
+# Health / versions summary
+RUN echo "Installed Components:" && \
+    python3 --version && \
+    npm --version && \
+    go version
+
+ENTRYPOINT ["/bin/bash"]

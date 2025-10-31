@@ -1,0 +1,113 @@
+# Remediation Backlog Scaffold
+# Populate and store in version control. Each item can map to an issue tracker ID.
+
+version: 1
+generated_at: 2025-10-29T00:00:00Z
+time_horizon_days: 90
+scoring:
+  impact_scale: 1-5
+  effort_scale: S=1,M=2,L=3
+  formula: "(impact * urgency * criticality) / effort_weight"
+  notes: |
+    - impact: revenue/user/security effect
+    - urgency: time sensitivity or regulatory deadline
+    - criticality: system tier (1-5)
+    - effort_weight: S=1, M=2, L=3 (approx engineering weeks / cost proxy)
+
+items:
+  - id: HOTSPOT-CORE-001
+    title: Refactor payment validation module
+    category: code-quality
+    source: hotspot_analysis
+    description: High churn + high complexity + low coverage in core revenue path.
+    impact: 5
+    urgency: 4
+    criticality: 5
+    effort: M
+    dependencies: []
+    owner: team-payments
+    target_date: 2025-11-15
+    rationale: "Reduces regression risk and accelerates feature velocity"
+    acceptance_criteria:
+      - Complexity score < 10 average
+      - Unit coverage > 85% for module files
+      - No circular dependencies
+    tracking_issue: "PAY-3421"
+    status: planned
+
+  - id: SECURITY-AUTH-002
+    title: Enforce role-based authorization checks on admin endpoints
+    category: security
+    source: security_scan
+    description: Several admin routes bypass explicit RBAC middleware.
+    impact: 5
+    urgency: 5
+    criticality: 4
+    effort: S
+    dependencies: []
+    owner: team-platform
+    target_date: 2025-10-30
+    rationale: "Prevents privilege escalation vectors"
+    acceptance_criteria:
+      - All admin routes pass RBAC middleware
+      - Authorization tests for 100% of admin endpoints
+    tracking_issue: "PLAT-1189"
+    status: in-progress
+
+  - id: DRIFT-ARCH-003
+    title: Review and formalize new dependency between billing-core and pricing-engine
+    category: architecture
+    source: drift_detection
+    description: New edge introduced raising coupling in core domain.
+    impact: 4
+    urgency: 3
+    criticality: 5
+    effort: S
+    dependencies: []
+    owner: arch-guild
+    target_date: 2025-11-05
+    rationale: "Prevent architectural erosion and future cascade changes"
+    acceptance_criteria:
+      - ADR documenting decision or alternative implemented
+      - Coupling metrics stable or reduced
+    tracking_issue: "ARCH-207"
+    status: planned
+
+  - id: KNOWLEDGE-RISK-004
+    title: Distribute ownership of core ledger directory
+    category: org-risk
+    source: ownership_analysis
+    description: Single contributor >85% commits last 90 days.
+    impact: 4
+    urgency: 4
+    criticality: 5
+    effort: M
+    dependencies: []
+    owner: eng-lead-finance
+    target_date: 2025-12-01
+    rationale: "Reduce key-person risk"
+    acceptance_criteria:
+      - Top contributor share < 60%
+      - Onboarding doc created
+      - Secondary code owner added
+    tracking_issue: "FIN-902"
+    status: planned
+
+  - id: OBS-GAP-005
+    title: Add distributed tracing to checkout workflow
+    category: observability
+    source: observability_review
+    description: Missing spans across 3 internal calls causing blind spots.
+    impact: 3
+    urgency: 3
+    criticality: 4
+    effort: S
+    dependencies: []
+    owner: team-observability
+    target_date: 2025-11-10
+    rationale: "Reduce MTTR and enable performance optimizations"
+    acceptance_criteria:
+      - p95 latency breakdown spans present
+      - Error attribution per service
+    tracking_issue: "OBS-143"
+    status: planned
